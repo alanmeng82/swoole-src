@@ -5,20 +5,12 @@ swoole_websocket_server: websocket push 3
 --FILE--
 <?php
 require_once __DIR__ . '/../include/bootstrap.php';
-var_dump(
-    swoole_websocket_server::unpack(
-        swoole_websocket_server::pack('Hello swoole!', WEBSOCKET_OPCODE_TEXT, true)
-    )
-);
+// swoole_websocket_server::pack(
+//         sha1(openssl_random_pseudo_bytes(256)), );
+// var_dump(
+//     swoole_websocket_server::unpack(
+//         swoole_websocket_server::pack('Hello swoole!', WEBSOCKET_OPCODE_TEXT, true)
+//     )
+// );
 ?>
 --EXPECT--
-object(Swoole\WebSocket\Frame)#1 (4) {
-  ["fd"]=>
-  int(0)
-  ["data"]=>
-  string(13) "Hello swoole!"
-  ["opcode"]=>
-  int(1)
-  ["finish"]=>
-  bool(true)
-}

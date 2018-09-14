@@ -41,9 +41,9 @@ $pm->parentFunc = function (int $pid) use ($pm, $data_list) {
     swoole_event_wait();
 };
 $pm->childFunc = function () use ($pm) {
-    $serv = new swoole_websocket_server('127.0.0.1', $pm->getFreePort(), SWOOLE_BASE);
+    $serv = new swoole_websocket_server('127.0.0.1', $pm->getFreePort(), mt_rand(0, 1) ? SWOOLE_BASE : SWOOLE_PROCESS);
     $serv->set([
-        'worker_num' => 1,
+        // 'worker_num' => 1,
         'log_file' => '/dev/null',
         'send_yield' => true,
     ]);

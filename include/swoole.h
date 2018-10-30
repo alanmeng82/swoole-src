@@ -86,7 +86,7 @@ int daemon(int nochdir, int noclose);
 
 /*----------------------------------------------------------------------------*/
 
-#define SWOOLE_VERSION "4.2.1"
+#define SWOOLE_VERSION "4.2.5"
 #define SWOOLE_BUG_REPORT \
     "A bug occurred in Swoole-v" SWOOLE_VERSION ", please report it.\n"\
     "The Swoole developers probably don't know about it,\n"\
@@ -180,13 +180,14 @@ typedef unsigned long ulong_t;
 #define SW_MAX_INT             INT_MAX
 
 #ifndef MAX
-#define MAX(a, b)              (a)>(b)?a:b;
+#define MAX(A, B)              ((A) > (B) ? (A) : (B))
 #endif
 #ifndef MIN
-#define MIN(a, b)              (a)<(b)?a:b;
+#define MIN(A, B)              ((A) < (B) ? (A) : (B))
 #endif
 
-#define SW_STRL(s)             s, sizeof(s)
+#define SW_STRS(s)             s, sizeof(s)
+#define SW_STRL(s)             s, sizeof(s)-1
 #define SW_START_SLEEP         usleep(100000)  //sleep 1s,wait fork and pthread_create
 
 #ifdef SW_USE_JEMALLOC
@@ -301,9 +302,7 @@ enum swGlobal_hook_type
 enum swServer_mode
 {
     SW_MODE_BASE          =  1,
-    SW_MODE_THREAD        =  2,
-    SW_MODE_PROCESS       =  3,
-    SW_MODE_SINGLE        =  4,
+    SW_MODE_PROCESS       =  2,
 };
 //-------------------------------------------------------------------------------
 enum swSocket_type
@@ -347,10 +346,11 @@ enum swWorker_status
 };
 //-------------------------------------------------------------------------------
 
-#define swWarn(str,...)        SwooleGS->lock_2.lock(&SwooleGS->lock_2);\
-snprintf(sw_error,SW_ERROR_MSG_SIZE,"%s: " str,__func__,##__VA_ARGS__);\
-swLog_put(SW_LOG_WARNING, sw_error);\
-SwooleGS->lock_2.unlock(&SwooleGS->lock_2)
+#define swWarn(str,...)          if (SW_LOG_WARNING >= SwooleG.log_level){\
+    SwooleGS->lock_2.lock(&SwooleGS->lock_2);\
+    snprintf(sw_error,SW_ERROR_MSG_SIZE,"%s: " str,__func__,##__VA_ARGS__);\
+    swLog_put(SW_LOG_WARNING, sw_error);\
+    SwooleGS->lock_2.unlock(&SwooleGS->lock_2);}
 
 #define swNotice(str,...)        if (SW_LOG_NOTICE >= SwooleG.log_level){\
     SwooleGS->lock_2.lock(&SwooleGS->lock_2);\
@@ -429,7 +429,6 @@ enum swTraceType
 #define swYield()              sched_yield() //or usleep(1)
 //#define swYield()              usleep(500000)
 #define SW_MAX_FDTYPE          32 //32 kinds of event
-#define SW_ERROR_MSG_SIZE      512
 
 //------------------------------Base--------------------------------
 #ifndef uchar
@@ -666,6 +665,7 @@ typedef struct _swProtocol
 
     int (*onPackage)(swConnection *conn, char *data, uint32_t length);
 	ssize_t (*get_package_length)(struct _swProtocol *protocol, swConnection *conn, char *data, uint32_t length);
+	uint8_t (*get_package_length_size)(swConnection *conn);
 } swProtocol;
 typedef ssize_t (*swProtocol_length_function)(struct _swProtocol *, swConnection *, char *, uint32_t);
 //------------------------------String--------------------------------
@@ -1096,7 +1096,9 @@ void* sw_shm_realloc(void *ptr, size_t new_size);
 #ifdef HAVE_RWLOCK
 int swRWLock_create(swLock *lock, int use_in_process);
 #endif
+#ifdef SEM_UNDO
 int swSem_create(swLock *lock, key_t key);
+#endif
 int swFileLock_create(swLock *lock, int fd);
 #ifdef HAVE_SPINLOCK
 int swSpinLock_create(swLock *object, int spin);
@@ -1290,6 +1292,7 @@ char* swoole_dirname(char *file);
 void swoole_dump_ascii(char *data, int size);
 int swoole_sync_writefile(int fd, void *data, int len);
 int swoole_sync_readfile(int fd, void *buf, int len);
+swString* swoole_sync_readfile_eof(int fd);
 int swoole_rand(int min, int max);
 int swoole_system_random(int min, int max);
 long swoole_file_get_size(FILE *fp);
@@ -1669,7 +1672,6 @@ struct _swProcessPool
     int (*onWorkerNotFound)(struct _swProcessPool *pool, pid_t pid, int status);
 
     sw_atomic_t round_id;
-    sw_atomic_t run_worker_num;
 
     swWorker *workers;
     swPipe *pipes;
@@ -1876,6 +1878,7 @@ int swProcessPool_response(swProcessPool *pool, char *data, int length);
 int swProcessPool_dispatch_blocking(swProcessPool *pool, swEventData *data, int *dst_worker_id);
 int swProcessPool_add_worker(swProcessPool *pool, swWorker *worker);
 int swProcessPool_del_worker(swProcessPool *pool, swWorker *worker);
+int swProcessPool_get_max_request(swProcessPool *pool);
 
 static sw_inline swWorker* swProcessPool_get_worker(swProcessPool *pool, int worker_id)
 {
@@ -2109,7 +2112,6 @@ typedef struct
     uint8_t update_time;
     uint8_t factory_lock_target;
     int16_t factory_target_worker;
-    swString **buffer_input;
     swString *buffer_stack;
     swReactor *reactor;
 } swThreadG;

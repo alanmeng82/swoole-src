@@ -78,7 +78,7 @@ static int swTimer_init(long msec)
     SwooleG.timer._next_id = 1;
     SwooleG.timer.round = 0;
 
-    if (swIsTaskWorker())
+    if (SwooleG.main_reactor == NULL)
     {
         swSystemTimer_init(msec, SwooleG.use_timer_pipe);
     }
@@ -118,6 +118,12 @@ swTimer_node* swTimer_add(swTimer *timer, int _msec, int interval, void *data, s
     if (unlikely(SwooleG.timer.fd == 0))
     {
         swTimer_init(_msec);
+    }
+
+    if (_msec <= 0 || _msec > INT_MAX)
+    {
+        swoole_error_log(SW_LOG_WARNING, SW_ERROR_INVALID_PARAMS, "_msec value[%d] is invalid.", _msec);
+        return NULL;
     }
 
     swTimer_node *tnode = sw_malloc(sizeof(swTimer_node));

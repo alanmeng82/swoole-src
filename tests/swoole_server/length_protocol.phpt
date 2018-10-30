@@ -3,16 +3,10 @@ swoole_server: (length protocol) recv 100k packet
 
 --SKIPIF--
 <?php require  __DIR__ . '/../include/skipif.inc'; ?>
---INI--
-assert.active=1
-assert.warning=1
-assert.bail=0
-assert.quiet_eval=0
-
 --FILE--
 <?php
-require_once __DIR__ . '/../include/bootstrap.php';
-require_once __DIR__ . '/../include/api/swoole_server/TestServer.php';
+require __DIR__ . '/../include/bootstrap.php';
+require __DIR__ . '/../include/api/swoole_server/TestServer.php';
 
 class PkgServer extends TestServer
 {
@@ -76,6 +70,7 @@ $pm->parentFunc = function ($pid)
     //echo "send ".TestServer::PKG_NUM." packet sucess, send $bytes bytes\n";
     $client->close();
 
+    sleep(0.1);
     swoole_process::kill($pid);
 };
 
@@ -98,6 +93,6 @@ $pm->childFunc = function () use ($pm) {
 $pm->childFirst();
 $pm->run();
 ?>
---EXPECTF--
+--EXPECTREGEX--
 end
-Total count=100000, bytes=%d
+Total count=100000?, bytes=\d+

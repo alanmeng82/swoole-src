@@ -320,8 +320,6 @@ int swFactory_end(swFactory *factory, int fd);
 int swFactory_check_callback(swFactory *factory);
 
 int swFactoryProcess_create(swFactory *factory, int worker_num);
-int swFactoryThread_create(swFactory *factory, int writer_num);
-
 
 //------------------------------------Server-------------------------------------------
 enum swServer_callback_type
@@ -556,10 +554,14 @@ struct _swServer
     char *upload_tmp_dir;
 
     /**
+     * http compression level for gzip/br
+     */
+    uint8_t http_compression_level;
+
+    /**
      * http static file directory
      */
     char *document_root;
-    uint8_t http_gzip_level;
     uint16_t document_root_len;
 
     /**
@@ -764,7 +766,6 @@ int swServer_get_socket(swServer *serv, int port);
 int swServer_worker_init(swServer *serv, swWorker *worker);
 swString** swServer_create_worker_buffer(swServer *serv);
 int swServer_create_task_worker(swServer *serv);
-void swServer_close_listen_port(swServer *serv);
 void swServer_enable_accept(swReactor *reactor);
 void swServer_reopen_log_file(swServer *serv);
 
@@ -774,7 +775,7 @@ int swTaskWorker_onFinish(swReactor *reactor, swEvent *event);
 void swTaskWorker_onStart(swProcessPool *pool, int worker_id);
 void swTaskWorker_onStop(swProcessPool *pool, int worker_id);
 int swTaskWorker_large_pack(swEventData *task, void *data, int data_len);
-int swTaskWorker_finish(swServer *serv, char *data, int data_len, int flags);
+int swTaskWorker_finish(swServer *serv, char *data, int data_len, int flags, swEventData *current_task);
 
 #define swTask_type(task)                  ((task)->info.from_fd)
 
@@ -962,6 +963,7 @@ void swServer_set_callback_onClose(swServer *serv, void (*callback)(swServer *, 
 
 int swWorker_create(swWorker *worker);
 int swWorker_onTask(swFactory *factory, swEventData *task);
+void swWorker_stop(swWorker *worker);
 
 static sw_inline swConnection *swWorker_get_connection(swServer *serv, int session_id)
 {
@@ -972,13 +974,9 @@ static sw_inline swConnection *swWorker_get_connection(swServer *serv, int sessi
 
 static sw_inline swString *swWorker_get_buffer(swServer *serv, int reactor_id)
 {
-    if (serv->factory_mode == SW_MODE_SINGLE)
+    if (serv->factory_mode == SW_MODE_BASE)
     {
         return SwooleWG.buffer_input[0];
-    }
-    else if (serv->factory_mode == SW_MODE_THREAD)
-    {
-        return SwooleTG.buffer_input[reactor_id];
     }
     else
     {

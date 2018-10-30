@@ -39,7 +39,7 @@ typedef struct _swTimer_callback
     int type;
 } swTimer_callback;
 
-static int php_swoole_del_timer(swTimer_node *tnode TSRMLS_DC);
+static int php_swoole_del_timer(swTimer_node *tnode);
 
 void php_swoole_clear_all_timer()
 {
@@ -60,12 +60,12 @@ void php_swoole_clear_all_timer()
         {
             continue;
         }
-        php_swoole_del_timer(tnode TSRMLS_CC);
+        php_swoole_del_timer(tnode);
         swTimer_del(&SwooleG.timer, tnode);
     }
 }
 
-long php_swoole_add_timer(int ms, zval *callback, zval *param, int persistent TSRMLS_DC)
+long php_swoole_add_timer(int ms, zval *callback, zval *param, int persistent)
 {
     if (ms > SW_TIMER_MAX_VALUE)
     {
@@ -81,7 +81,7 @@ long php_swoole_add_timer(int ms, zval *callback, zval *param, int persistent TS
     char *func_name = NULL;
 
     zend_fcall_info_cache *func_cache = emalloc(sizeof(zend_fcall_info_cache));
-    if (!sw_zend_is_callable_ex(callback, NULL, 0, &func_name, NULL, func_cache, NULL TSRMLS_CC))
+    if (!sw_zend_is_callable_ex(callback, NULL, 0, &func_name, NULL, func_cache, NULL))
     {
         efree(func_cache);
         efree(func_name);
@@ -90,10 +90,7 @@ long php_swoole_add_timer(int ms, zval *callback, zval *param, int persistent TS
     }
     efree(func_name);
 
-    if (!swIsTaskWorker())
-    {
-        php_swoole_check_reactor();
-    }
+    php_swoole_check_reactor();
 
     swTimer_callback *cb = emalloc(sizeof(swTimer_callback));
 
@@ -131,10 +128,10 @@ long php_swoole_add_timer(int ms, zval *callback, zval *param, int persistent TS
         timer_func = php_swoole_onTimeout;
     }
 
-    sw_zval_add_ref(&cb->callback);
+    Z_TRY_ADDREF_P(cb->callback);
     if (cb->data)
     {
-        sw_zval_add_ref(&cb->data);
+        Z_TRY_ADDREF_P(cb->data);
     }
 
     swTimer_node *tnode = swTimer_add(&SwooleG.timer, ms, persistent, cb, timer_func);
@@ -150,7 +147,7 @@ long php_swoole_add_timer(int ms, zval *callback, zval *param, int persistent TS
     }
 }
 
-static int php_swoole_del_timer(swTimer_node *tnode TSRMLS_DC)
+static int php_swoole_del_timer(swTimer_node *tnode)
 {
     swTimer_callback *cb = tnode->data;
     if (!cb)
@@ -159,11 +156,11 @@ static int php_swoole_del_timer(swTimer_node *tnode TSRMLS_DC)
     }
     if (cb->callback)
     {
-        sw_zval_ptr_dtor(&cb->callback);
+        zval_ptr_dtor(cb->callback);
     }
     if (cb->data)
     {
-        sw_zval_ptr_dtor(&cb->data);
+        zval_ptr_dtor(cb->data);
     }
     if (SwooleG.enable_coroutine && cb->func_cache)
     {
@@ -202,21 +199,16 @@ void php_swoole_onTimeout(swTimer *timer, swTimer_node *tnode)
     }
     else
     {
-        zval **args[2];
-        int argc;
+        zval args[1];
+        int argc = 0;
 
-        if (NULL == cb->data)
-        {
-            argc = 0;
-            args[0] = NULL;
-        }
-        else
+        if (cb->data)
         {
             argc = 1;
-            args[0] = &cb->data;
+            args[0] = *cb->data;
         }
 
-        if (sw_call_user_function_ex(EG(function_table), NULL, cb->callback, &retval, argc, args, 0, NULL TSRMLS_CC) == FAILURE)
+        if (sw_call_user_function_ex(EG(function_table), NULL, cb->callback, &retval, argc, args, 0, NULL) == FAILURE)
         {
             swoole_php_fatal_error(E_WARNING, "swoole_timer: onTimeout handler error");
             return;
@@ -225,13 +217,13 @@ void php_swoole_onTimeout(swTimer *timer, swTimer_node *tnode)
 
     if (EG(exception))
     {
-        zend_exception_error(EG(exception), E_ERROR TSRMLS_CC);
+        zend_exception_error(EG(exception), E_ERROR);
     }
     if (retval)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
-    php_swoole_del_timer(tnode TSRMLS_CC);
+    php_swoole_del_timer(tnode);
 }
 
 void php_swoole_onInterval(swTimer *timer, swTimer_node *tnode)
@@ -249,13 +241,13 @@ void php_swoole_onInterval(swTimer *timer, swTimer_node *tnode)
     if (SwooleG.enable_coroutine)
     {
         zval *args[2];
+        args[0] = ztimer_id;
         if (cb->data)
         {
             argc = 2;
-            sw_zval_add_ref(&cb->data);
+            Z_TRY_ADDREF_P(cb->data);
             args[1] = cb->data;
         }
-        args[0] = ztimer_id;
 
         int ret = coro_create(cb->func_cache, args, argc, &retval, NULL, NULL);
         if (CORO_LIMIT == ret)
@@ -266,16 +258,16 @@ void php_swoole_onInterval(swTimer *timer, swTimer_node *tnode)
     }
     else
     {
-        zval **args[2];
+        zval args[2];
+        args[0] = *ztimer_id;
         if (cb->data)
         {
             argc = 2;
-            sw_zval_add_ref(&cb->data);
-            args[1] = &cb->data;
+            Z_TRY_ADDREF_P(cb->data);
+            args[1] = *cb->data;
         }
-        args[0] = &ztimer_id;
 
-        if (sw_call_user_function_ex(EG(function_table), NULL, cb->callback, &retval, argc, args, 0, NULL TSRMLS_CC) == FAILURE)
+        if (sw_call_user_function_ex(EG(function_table), NULL, cb->callback, &retval, argc, args, 0, NULL) == FAILURE)
         {
             swoole_php_fatal_error(E_WARNING, "swoole_timer: onTimerCallback handler error");
             return;
@@ -284,17 +276,17 @@ void php_swoole_onInterval(swTimer *timer, swTimer_node *tnode)
 
     if (EG(exception))
     {
-        zend_exception_error(EG(exception), E_ERROR TSRMLS_CC);
+        zend_exception_error(EG(exception), E_ERROR);
     }
     if (retval != NULL)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
-    sw_zval_ptr_dtor(&ztimer_id);
+    zval_ptr_dtor(ztimer_id);
 
     if (tnode->remove)
     {
-        php_swoole_del_timer(tnode TSRMLS_CC);
+        php_swoole_del_timer(tnode);
     }
 }
 
@@ -304,12 +296,12 @@ PHP_FUNCTION(swoole_timer_tick)
     zval *callback;
     zval *param = NULL;
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "lz|z", &after_ms, &callback, &param) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "lz|z", &after_ms, &callback, &param) == FAILURE)
     {
-        return;
+        RETURN_FALSE;
     }
 
-    long timer_id = php_swoole_add_timer(after_ms, callback, param, 1 TSRMLS_CC);
+    long timer_id = php_swoole_add_timer(after_ms, callback, param, 1);
     if (timer_id < 0)
     {
         RETURN_FALSE;
@@ -326,12 +318,12 @@ PHP_FUNCTION(swoole_timer_after)
     zval *callback;
     zval *param = NULL;
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "lz|z", &after_ms, &callback, &param) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "lz|z", &after_ms, &callback, &param) == FAILURE)
     {
-        return;
+        RETURN_FALSE;
     }
 
-    long timer_id = php_swoole_add_timer(after_ms, callback, param, 0 TSRMLS_CC);
+    long timer_id = php_swoole_add_timer(after_ms, callback, param, 0);
     if (timer_id < 0)
     {
         RETURN_FALSE;
@@ -351,9 +343,9 @@ PHP_FUNCTION(swoole_timer_clear)
     }
 
     long id;
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &id) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "l", &id) == FAILURE)
     {
-        return;
+        RETURN_FALSE;
     }
 
     swTimer_node *tnode = swTimer_get(&SwooleG.timer, id);
@@ -373,7 +365,7 @@ PHP_FUNCTION(swoole_timer_clear)
         RETURN_TRUE;
     }
     //remove timer
-    if (php_swoole_del_timer(tnode TSRMLS_CC) < 0)
+    if (php_swoole_del_timer(tnode) < 0)
     {
         RETURN_FALSE;
     }
@@ -396,9 +388,9 @@ PHP_FUNCTION(swoole_timer_exists)
     }
 
     long id;
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &id) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "l", &id) == FAILURE)
     {
-        return;
+        RETURN_FALSE;
     }
 
     swTimer_node *tnode = swTimer_get(&SwooleG.timer, id);

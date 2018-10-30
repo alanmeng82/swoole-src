@@ -51,7 +51,6 @@ int swManager_start(swFactory *factory)
         return SW_ERR;
     }
 
-    //worker进程的pipes
     for (i = 0; i < serv->worker_num; i++)
     {
         if (swPipeUnsock_create(&object->pipes[i], 1, SOCK_DGRAM) < 0)
@@ -128,8 +127,7 @@ int swManager_start(swFactory *factory)
         {
             return SW_OK;
         }
-        swServer_close_listen_port(serv);
-
+        swServer_close_port(serv, SW_TRUE);
         /**
          * create task worker process
          */
@@ -273,10 +271,17 @@ static int swManager_loop(swFactory *factory)
                 {
                     continue;
                 }
-                pid_t new_pid = swManager_spawn_worker(factory, msg.worker_id);
-                if (new_pid > 0)
+                if (msg.worker_id >= serv->worker_num)
                 {
-                    serv->workers[msg.worker_id].pid = new_pid;
+                    swProcessPool_spawn(&serv->gs->task_workers, swServer_get_worker(serv, msg.worker_id));
+                }
+                else
+                {
+                    pid_t new_pid = swManager_spawn_worker(factory, msg.worker_id);
+                    if (new_pid > 0)
+                    {
+                        serv->workers[msg.worker_id].pid = new_pid;
+                    }
                 }
             }
             ManagerProcess.read_message = 0;
@@ -624,7 +629,7 @@ pid_t swManager_spawn_user_worker(swServer *serv, swWorker* worker)
         SwooleWG.id = worker->id;
         worker->pid = getpid();
         //close tcp listen socket
-        if (serv->factory_mode == SW_MODE_SINGLE)
+        if (serv->factory_mode == SW_MODE_BASE)
         {
             swServer_close_port(serv, SW_TRUE);
         }
@@ -638,7 +643,11 @@ pid_t swManager_spawn_user_worker(swServer *serv, swWorker* worker)
         {
             swHashMap_del_int(serv->user_worker_map, worker->pid);
         }
-        worker->pid = pid;
+        /**
+         * worker: local memory
+         * serv->user_workers: shared memory
+         */
+        swServer_get_worker(serv, worker->id)->pid = worker->pid = pid;
         swHashMap_add_int(serv->user_worker_map, pid, worker);
         return pid;
     }

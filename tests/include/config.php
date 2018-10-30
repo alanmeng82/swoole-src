@@ -4,6 +4,9 @@ require_once __DIR__ . '/functions.php';
 /** ============== Env =============== */
 define('IS_MAC_OS', stripos(PHP_OS, 'Darwin') !== false);
 define('IS_IN_TRAVIS', file_exists('/.travisenv'));
+define('HAS_SSL', defined("SWOOLE_SSL"));
+define('HAS_ASYNC_REDIS', class_exists("swoole_redis", false));
+define('HAS_HTTP2', class_exists("swoole_http2_request", false));
 
 /** ============ Servers ============ */
 define('TCP_SERVER_HOST', '127.0.0.1');
@@ -43,6 +46,7 @@ if (IS_MAC_OS) {
 }
 
 /** ============== Files ============== */
+define('SOURCE_ROOT_PATH', __DIR__ . '/../../');
 define('TEST_IMAGE', __DIR__ . '/../../examples/test.jpg');
 define('TEST_LOG_FILE', '/tmp/swoole.log');
 define('SSL_FILE_DIR', __DIR__ . '/api/swoole_http_server/localhost-ssl');
@@ -52,3 +56,4 @@ define('MAX_CONCURRENCY', IS_IN_TRAVIS ? 50 : 200);
 define('MAX_CONCURRENCY_MID', IS_IN_TRAVIS ? 35 : 100);
 define('MAX_CONCURRENCY_LOW', IS_IN_TRAVIS ? 20 : 50);
 define('MAX_REQUESTS', IS_IN_TRAVIS ? 50 : 100);
+define('MAX_REQUESTS_LOW', IS_IN_TRAVIS ? 10 : 25);

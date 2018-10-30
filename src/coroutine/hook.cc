@@ -20,9 +20,11 @@
 
 #ifndef _WIN32
 
+#include <sys/file.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/poll.h>
+#include <sys/statvfs.h>
+#include <poll.h>
 #include <dirent.h>
 #include <string>
 #include <iostream>
@@ -216,6 +218,12 @@ static void handler_access(swAio_event *event)
     event->error = errno;
 }
 
+static void handler_flock(swAio_event *event)
+{
+    event->ret = ::flock(event->fd, (int) event->flags);
+    event->error = errno;
+}
+
 static void handler_open(swAio_event *event)
 {
     event->ret = open((const char*) event->buf, event->flags, event->offset);
@@ -261,6 +269,12 @@ static void handler_mkdir(swAio_event *event)
 static void handler_rmdir(swAio_event *event)
 {
     event->ret = rmdir((const char*) event->buf);
+    event->error = errno;
+}
+
+static void handler_statvfs(swAio_event *event)
+{
+    event->ret = statvfs((const char *) event->buf, (struct statvfs *) event->offset);
     event->error = errno;
 }
 
@@ -436,6 +450,31 @@ int swoole_coroutine_unlink(const char *pathname)
     return ev.ret;
 }
 
+int swoole_coroutine_statvfs(const char *path, struct statvfs *buf)
+{
+    if (SwooleG.main_reactor == nullptr || coroutine_get_current_cid() == -1)
+    {
+        return statvfs(path, buf);
+    }
+
+    swAio_event ev;
+    bzero(&ev, sizeof(ev));
+    ev.buf = (void*) path;
+    ev.offset = (off_t) buf;
+    ev.handler = handler_statvfs;
+    ev.callback = aio_onCompleted;
+    ev.object = coroutine_get_current();
+    ev.req = &ev;
+
+    int ret = swAio_dispatch(&ev);
+    if (ret < 0)
+    {
+        return SW_ERR;
+    }
+    coroutine_yield((coroutine_t *) ev.object);
+    return ev.ret;
+}
+
 int swoole_coroutine_mkdir(const char *pathname, mode_t mode)
 {
     if (SwooleG.main_reactor == nullptr || coroutine_get_current_cid() == -1)
@@ -544,6 +583,31 @@ int swoole_coroutine_sleep(double sec)
     }
     coroutine_yield(co);
     return 0;
+}
+
+int swoole_coroutine_flock(int fd, int operation)
+{
+    if (SwooleG.main_reactor == nullptr || coroutine_get_current_cid() == -1)
+    {
+        return flock(fd, operation);
+    }
+
+    swAio_event ev;
+    bzero(&ev, sizeof(ev));
+    ev.fd = fd;
+    ev.flags = operation;
+    ev.handler = handler_flock;
+    ev.callback = aio_onCompleted;
+    ev.object = coroutine_get_current();
+    ev.req = &ev;
+
+    int ret = swAio_dispatch(&ev);
+    if (ret < 0)
+    {
+        return SW_ERR;
+    }
+    coroutine_yield((coroutine_t *) ev.object);
+    return ev.ret;
 }
 
 #if 0

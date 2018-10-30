@@ -117,11 +117,11 @@ typedef struct
 {
     swClient *cli;
     char *host;
-    zend_size_t host_len;
+    size_t host_len;
     long port;
     double timeout;
     char* uri;
-    zend_size_t uri_len;
+    size_t uri_len;
 
     swTimer_node *timer;
 
@@ -157,18 +157,18 @@ typedef struct
 
 } http_client;
 
-void http_client_clear_response_properties(zval *zobject TSRMLS_DC);
+void http_client_clear_response_properties(zval *zobject);
 int http_client_parser_on_header_field(swoole_http_parser *parser, const char *at, size_t length);
 int http_client_parser_on_header_value(swoole_http_parser *parser, const char *at, size_t length);
 int http_client_parser_on_body(swoole_http_parser *parser, const char *at, size_t length);
 int http_client_parser_on_headers_complete(swoole_http_parser *parser);
 int http_client_parser_on_message_complete(swoole_http_parser *parser);
 
-http_client* http_client_create(zval *object TSRMLS_DC);
+http_client* http_client_create(zval *zobject);
 void http_client_clear(http_client *http);
 int http_client_check_keep(http_client *http);
 void http_client_reset(http_client *http);
-void http_client_free(zval *object TSRMLS_DC);
+uint8_t http_client_free(zval *zobject);
 
 static sw_inline void http_client_create_token(int length, char *buf)
 {
@@ -182,7 +182,7 @@ static sw_inline void http_client_create_token(int length, char *buf)
     buf[length] = '\0';
 }
 
-static sw_inline int http_client_check_data(zval *data TSRMLS_DC)
+static sw_inline int http_client_check_data(zval *data)
 {
     if (Z_TYPE_P(data) != IS_ARRAY && Z_TYPE_P(data) != IS_STRING)
     {
@@ -200,7 +200,7 @@ static sw_inline int http_client_check_data(zval *data TSRMLS_DC)
     return SW_OK;
 }
 
-static sw_inline void http_client_swString_append_headers(swString* swStr, const char* key, zend_size_t key_len, const char* data, zend_size_t data_len)
+static sw_inline void http_client_swString_append_headers(swString* swStr, const char* key, size_t key_len, const char* data, size_t data_len)
 {
     swString_append_ptr(swStr, (char *)key, key_len);
     swString_append_ptr(swStr, (char *)ZEND_STRL(": "));

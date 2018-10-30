@@ -22,16 +22,14 @@
 
 extern zend_class_entry *swoole_http2_response_class_entry_ptr;
 
-void http2_add_cookie(nghttp2_nv *nv, int *index, zval *cookies TSRMLS_DC)
+void http2_add_cookie(nghttp2_nv *nv, int *index, zval *cookies)
 {
     char *key;
     uint32_t keylen;
     int keytype;
     zval *value = NULL;
     char *encoded_value;
-    uint32_t offest = 0;
     swString *buffer = SwooleTG.buffer_stack;
-    swString_clear(buffer);
 
     SW_HASHTABLE_FOREACH_START2(Z_ARRVAL_P(cookies), key, keylen, keytype, value)
         if (HASH_KEY_IS_STRING != keytype)
@@ -44,6 +42,7 @@ void http2_add_cookie(nghttp2_nv *nv, int *index, zval *cookies TSRMLS_DC)
             continue;
         }
 
+        swString_clear(buffer);
         swString_append_ptr(buffer, key, keylen);
         swString_append_ptr(buffer, "=", 1);
 
@@ -53,26 +52,14 @@ void http2_add_cookie(nghttp2_nv *nv, int *index, zval *cookies TSRMLS_DC)
         {
             swString_append_ptr(buffer, encoded_value, encoded_value_len);
             efree(encoded_value);
-            http2_add_header(&nv[(*index)++], ZEND_STRL("cookie"), buffer->str + offest, keylen + 1 + encoded_value_len);
-            offest += keylen + 1 + encoded_value_len;
+            http2_add_header(&nv[(*index)++], ZEND_STRL("cookie"), buffer->str, buffer->length);
         }
     SW_HASHTABLE_FOREACH_END();
 }
 
 int http2_client_parse_header(http2_client_property *hcc, http2_client_stream *stream , int flags, char *in, size_t inlen)
 {
-    nghttp2_hd_inflater *inflater = hcc->inflater;
     zval *zresponse = stream->response_object;
-    if (!inflater)
-    {
-        int ret = nghttp2_hd_inflate_new(&inflater);
-        if (ret != 0)
-        {
-            swoole_php_error(E_WARNING, "nghttp2_hd_inflate_init() failed, Error: %s[%d].", nghttp2_strerror(ret), ret);
-            return SW_ERR;
-        }
-        hcc->inflater = inflater;
-    }
 
     if (flags & SW_HTTP2_FLAG_PRIORITY)
     {
@@ -82,9 +69,9 @@ int http2_client_parse_header(http2_client_property *hcc, http2_client_stream *s
         inlen -= 5;
     }
 
-    zval *headers = sw_zend_read_property_array(swoole_http2_response_class_entry_ptr, zresponse, ZEND_STRL("headers"), 1 TSRMLS_CC);
-    zval *cookies = sw_zend_read_property_array(swoole_http2_response_class_entry_ptr, zresponse, ZEND_STRL("cookies"), 1 TSRMLS_CC);
-    zval *set_cookie_headers = sw_zend_read_property_array(swoole_http2_response_class_entry_ptr, zresponse, ZEND_STRL("set_cookie_headers"), 1 TSRMLS_CC);
+    zval *zheaders = sw_zend_read_property_array(swoole_http2_response_class_entry_ptr, zresponse, ZEND_STRL("headers"), 1);
+    zval *zcookies = sw_zend_read_property_array(swoole_http2_response_class_entry_ptr, zresponse, ZEND_STRL("cookies"), 1);
+    zval *zset_cookie_headers = sw_zend_read_property_array(swoole_http2_response_class_entry_ptr, zresponse, ZEND_STRL("set_cookie_headers"), 1);
 
     ssize_t rv;
     for (;;)
@@ -93,7 +80,7 @@ int http2_client_parse_header(http2_client_property *hcc, http2_client_stream *s
         int inflate_flags = 0;
         size_t proclen;
 
-        rv = nghttp2_hd_inflate_hd(inflater, &nv, &inflate_flags, (uchar *) in, inlen, 1);
+        rv = nghttp2_hd_inflate_hd(hcc->inflater, &nv, &inflate_flags, (uchar *) in, inlen, 1);
         if (rv < 0)
         {
             swoole_php_error(E_WARNING, "inflate failed, Error: %s[%zd].", nghttp2_strerror(rv), rv);
@@ -113,7 +100,7 @@ int http2_client_parse_header(http2_client_property *hcc, http2_client_stream *s
             {
                 if (strncasecmp((char *) nv.name + 1, "status", nv.namelen -1) == 0)
                 {
-                    zend_update_property_long(swoole_http2_response_class_entry_ptr, zresponse, ZEND_STRL("statusCode"), atoi((char *) nv.value) TSRMLS_CC);
+                    zend_update_property_long(swoole_http2_response_class_entry_ptr, zresponse, ZEND_STRL("statusCode"), atoi((char *) nv.value));
                     continue;
                 }
             }
@@ -130,18 +117,18 @@ int http2_client_parse_header(http2_client_property *hcc, http2_client_stream *s
 #endif
             else if (strncasecmp((char *) nv.name, "set-cookie", nv.namelen) == 0)
             {
-                if (SW_OK != http_parse_set_cookies((char *) nv.value, nv.valuelen, cookies, set_cookie_headers))
+                if (SW_OK != http_parse_set_cookies((char *) nv.value, nv.valuelen, zcookies, zset_cookie_headers))
                 {
                     return SW_ERR;
                 }
             }
 
-            sw_add_assoc_stringl_ex(headers, (char *) nv.name, nv.namelen + 1, (char *) nv.value, nv.valuelen, 1);
+            add_assoc_stringl_ex(zheaders, (char *) nv.name, nv.namelen, (char *) nv.value, nv.valuelen);
         }
 
         if (inflate_flags & NGHTTP2_HD_INFLATE_FINAL)
         {
-            nghttp2_hd_inflate_end_headers(inflater);
+            nghttp2_hd_inflate_end_headers(hcc->inflater);
             break;
         }
 
@@ -151,11 +138,6 @@ int http2_client_parse_header(http2_client_property *hcc, http2_client_stream *s
         }
     }
 
-    rv = nghttp2_hd_inflate_change_table_size(inflater, 4096);
-    if (rv != 0)
-    {
-        return rv;
-    }
     return SW_OK;
 }
 

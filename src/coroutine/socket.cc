@@ -17,9 +17,9 @@ static void socket_onResolveCompleted(swAio_event *event);
 
 bool Socket::socks5_handshake()
 {
-    if (read_locked || write_locked)
+    if (read_cid || write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return false;
     }
 
@@ -108,6 +108,7 @@ bool Socket::socks5_handshake()
             buf[4] = ctx->l_target_host;
             buf += 5;
             memcpy(buf, ctx->target_host, ctx->l_target_host);
+            sw_free(ctx->target_host);
             buf += ctx->l_target_host;
             *(uint16_t *) buf = htons(ctx->target_port);
 
@@ -133,6 +134,7 @@ bool Socket::socks5_handshake()
         /**
          * response
          */
+        buf = ctx->buf;
         n = recv(buf, sizeof(ctx->buf));
         if (n <= 0)
         {
@@ -167,9 +169,9 @@ bool Socket::socks5_handshake()
 
 bool Socket::http_proxy_handshake()
 {
-    if (read_locked || write_locked)
+    if (read_cid || write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return false;
     }
 
@@ -365,11 +367,70 @@ Socket::Socket(int _fd, Socket *server_sock)
     init();
 }
 
+Socket::Socket(int _fd, enum swSocket_type _type)
+{
+    type = _type;
+    switch (type)
+    {
+    case SW_SOCK_TCP6:
+        _sock_domain = AF_INET6;
+        _sock_type = SOCK_STREAM;
+        break;
+    case SW_SOCK_UNIX_STREAM:
+        _sock_domain = AF_UNIX;
+        _sock_type = SOCK_STREAM;
+        break;
+    case SW_SOCK_UDP:
+        _sock_domain = AF_INET;
+        _sock_type = SOCK_DGRAM;
+        break;
+    case SW_SOCK_UDP6:
+        _sock_domain = AF_INET6;
+        _sock_type = SOCK_DGRAM;
+        break;
+    case SW_SOCK_UNIX_DGRAM:
+        _sock_domain = AF_UNIX;
+        _sock_type = SOCK_DGRAM;
+        break;
+    case SW_SOCK_TCP:
+    default:
+        _sock_domain = AF_INET;
+        _sock_type = SOCK_STREAM;
+        break;
+    }
+
+    init();
+
+    if (swIsMaster() && SwooleTG.type == SW_THREAD_REACTOR)
+    {
+        reactor = SwooleTG.reactor;
+    }
+    else
+    {
+        reactor = SwooleG.main_reactor;
+    }
+
+    socket = swReactor_get(reactor, _fd);
+
+    bzero(socket, sizeof(swConnection));
+    socket->fd = _fd;
+    socket->object = this;
+    socket->socket_type = type;
+
+    swSetNonBlock(socket->fd);
+    if (!swReactor_handle_isset(reactor, SW_FD_CORO_SOCKET))
+    {
+        reactor->setHandle(reactor, SW_FD_CORO_SOCKET | SW_EVENT_READ, socket_onRead);
+        reactor->setHandle(reactor, SW_FD_CORO_SOCKET | SW_EVENT_WRITE, socket_onWrite);
+        reactor->setHandle(reactor, SW_FD_CORO_SOCKET | SW_EVENT_ERROR, socket_onRead);
+    }
+}
+
 bool Socket::connect(const struct sockaddr *addr, socklen_t addrlen)
 {
-    if (read_locked || write_locked)
+    if (read_cid || write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return false;
     }
     int retval = socket_connect(socket->fd, addr, addrlen);
@@ -384,7 +445,7 @@ bool Socket::connect(const struct sockaddr *addr, socklen_t addrlen)
         {
             goto _error;
         }
-        yield(SOCKET_LOCK_READ | SOCKET_LOCK_WRITE);
+        yield(SOCKET_LOCK_RW);
         //Connection has timed out
         if (errCode == ETIMEDOUT)
         {
@@ -404,26 +465,26 @@ bool Socket::connect(const struct sockaddr *addr, socklen_t addrlen)
 
 bool Socket::connect(string host, int port, int flags)
 {
-    if (read_locked || write_locked)
+    if (read_cid || write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return false;
     }
-    //enable socks5 proxy
+
     if (socks5_proxy)
     {
-        socks5_proxy->target_host = (char *) host.c_str();
+        //enable socks5 proxy
+        socks5_proxy->target_host = sw_strndup((char *) host.c_str(), host.size());
         socks5_proxy->l_target_host = host.size();
         socks5_proxy->target_port = port;
 
         host = socks5_proxy->host;
         port = socks5_proxy->port;
     }
-
-    //enable http proxy
-    if (http_proxy)
+    else if (http_proxy)
     {
-        http_proxy->target_host = (char *) host.c_str();
+        //enable http proxy
+        http_proxy->target_host = sw_strndup((char *) host.c_str(), host.size());
         http_proxy->l_target_host = host.size();
         http_proxy->target_port = port;
 
@@ -541,7 +602,7 @@ static void socket_onResolveCompleted(swAio_event *event)
     {
         sock->errCode = SW_ERROR_DNSLOOKUP_RESOLVE_FAILED;
     }
-    sock->resume();
+    sock->resume(SOCKET_LOCK_RW);
 }
 
 static void socket_onTimeout(swTimer *timer, swTimer_node *tnode)
@@ -550,26 +611,30 @@ static void socket_onTimeout(swTimer *timer, swTimer_node *tnode)
     sock->timer = NULL;
     sock->errCode = ETIMEDOUT;
     swDebug("socket[%d] timeout", sock->socket->fd);
+    int operation;
     if (tnode->type == SW_TIMER_TYPE_CORO_READ)
     {
         swReactor_remove_read_event(sock->reactor, sock->socket->fd);
+        operation = SOCKET_LOCK_READ;
     }
     else if (tnode->type == SW_TIMER_TYPE_CORO_WRITE)
     {
         swReactor_remove_write_event(sock->reactor, sock->socket->fd);
+        operation = SOCKET_LOCK_READ;
     }
     else
     {
         sock->reactor->del(sock->reactor, sock->socket->fd);
+        operation = SOCKET_LOCK_RW;
     }
-    sock->resume();
+    sock->resume(operation);
 }
 
 static int socket_onRead(swReactor *reactor, swEvent *event)
 {
     Socket *sock = (Socket *) event->socket->object;
     swReactor_remove_read_event(reactor, event->fd);
-    sock->resume();
+    sock->resume(SOCKET_LOCK_READ);
     return SW_OK;
 }
 
@@ -577,7 +642,7 @@ static int socket_onWrite(swReactor *reactor, swEvent *event)
 {
     Socket *sock = (Socket *) event->socket->object;
     swReactor_remove_write_event(reactor, event->fd);
-    sock->resume();
+    sock->resume(SOCKET_LOCK_WRITE);
     return SW_OK;
 }
 
@@ -588,9 +653,9 @@ ssize_t Socket::peek(void *__buf, size_t __n)
 
 ssize_t Socket::recv(void *__buf, size_t __n)
 {
-    if (read_locked)
+    if (read_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return -1;
     }
     ssize_t retval = swConnection_recv(socket, __buf, __n, 0);
@@ -637,11 +702,114 @@ ssize_t Socket::recv(void *__buf, size_t __n)
     return retval;
 }
 
+ssize_t Socket::read(void *__buf, size_t __n)
+{
+    if (read_cid)
+    {
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
+        return -1;
+    }
+    ssize_t retval = ::read(socket->fd, __buf, __n);
+    if (retval >= 0)
+    {
+        return retval;
+    }
+
+    if (swConnection_error(errno) != SW_WAIT)
+    {
+        errCode = errno;
+        return -1;
+    }
+
+    while (true)
+    {
+        int events = SW_EVENT_READ;
+#ifdef SW_USE_OPENSSL
+        if (socket->ssl && socket->ssl_want_write)
+        {
+            events = SW_EVENT_WRITE;
+        }
+#endif
+        if (!wait_events(events))
+        {
+            return -1;
+        }
+        yield(SOCKET_LOCK_READ);
+        if (errCode == ETIMEDOUT)
+        {
+            return -1;
+        }
+        retval = ::read(socket->fd, __buf, __n);
+        if (retval < 0)
+        {
+            if (swConnection_error(errno) == SW_WAIT)
+            {
+                continue;
+            }
+            errCode = errno;
+        }
+        break;
+    }
+    return retval;
+}
+
+ssize_t Socket::write(const void *__buf, size_t __n)
+{
+    if (write_cid)
+    {
+        swWarn("socket has already been bound to another coroutine #%d.", write_cid);
+        return -1;
+    }
+    ssize_t retval = ::write(socket->fd, (void *) __buf, __n);
+    if (retval >= 0)
+    {
+        return retval;
+    }
+
+    if (swConnection_error(errno) != SW_WAIT)
+    {
+        errCode = errno;
+        return -1;
+    }
+
+    while (true)
+    {
+        int events = SW_EVENT_WRITE;
+#ifdef SW_USE_OPENSSL
+        if (socket->ssl && socket->ssl_want_read)
+        {
+            events = SW_EVENT_READ;
+        }
+#endif
+        if (!wait_events(events))
+        {
+            return -1;
+        }
+        yield(SOCKET_LOCK_WRITE);
+        if (errCode == ETIMEDOUT)
+        {
+            return -1;
+        }
+        ssize_t retval =  ::write(socket->fd, (void *) __buf, __n);
+        if (retval < 0)
+        {
+            if (swConnection_error(errno) == SW_WAIT)
+            {
+                continue;
+            }
+            errCode = errno;
+        }
+        break;
+    }
+
+    return retval;
+}
+
 ssize_t Socket::recv_all(void *__buf, size_t __n)
 {
-    if (read_locked)
+    if (read_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return -1;
     }
     ssize_t retval, total_bytes = 0;
@@ -667,9 +835,9 @@ ssize_t Socket::recv_all(void *__buf, size_t __n)
 
 ssize_t Socket::send_all(const void *__buf, size_t __n)
 {
-    if (write_locked)
+    if (write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", write_cid);
         return -1;
     }
     ssize_t retval, total_bytes = 0;
@@ -695,9 +863,9 @@ ssize_t Socket::send_all(const void *__buf, size_t __n)
 
 ssize_t Socket::send(const void *__buf, size_t __n)
 {
-    if (write_locked)
+    if (write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", write_cid);
         return -1;
     }
     ssize_t retval = swConnection_send(socket, (void *) __buf, __n, 0);
@@ -747,9 +915,9 @@ ssize_t Socket::send(const void *__buf, size_t __n)
 
 ssize_t Socket::sendmsg(const struct msghdr *msg, int flags)
 {
-    if (write_locked)
+    if (write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", write_cid);
         return -1;
     }
     ssize_t retval = ::sendmsg(socket->fd, msg, flags);
@@ -784,9 +952,9 @@ ssize_t Socket::sendmsg(const struct msghdr *msg, int flags)
 
 ssize_t Socket::recvmsg(struct msghdr *msg, int flags)
 {
-    if (read_locked)
+    if (read_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return -1;
     }
     ssize_t retval = ::recvmsg(socket->fd, msg, flags);
@@ -821,11 +989,25 @@ ssize_t Socket::recvmsg(struct msghdr *msg, int flags)
 
 void Socket::yield(int operation)
 {
+    int cid = coroutine_get_current_cid();
+    if (unlikely(cid == -1))
+    {
+        swError("Socket::yield() must be called in the coroutine.");
+    }
+
     errCode = 0;
     if (_timeout > 0)
     {
         int ms = (int) (_timeout * 1000);
+        if (ms <= 0 || ms >= SW_TIMER_MAX_VALUE)
+        {
+            goto _skip_timer;
+        }
         timer = swTimer_add(&SwooleG.timer, ms, 0, this, socket_onTimeout);
+        if (!timer)
+        {
+            goto _skip_timer;
+        }
         if (operation == SOCKET_LOCK_READ)
         {
             timer->type = SW_TIMER_TYPE_CORO_READ;
@@ -839,29 +1021,30 @@ void Socket::yield(int operation)
             timer->type = SW_TIMER_TYPE_CORO_ALL;
         }
     }
-    _cid = coroutine_get_current_cid();
-    if (_cid == -1)
+
+    // bind read/write coroutine
+    _skip_timer: if (operation & SOCKET_LOCK_WRITE)
     {
-        swWarn("Socket::yield() must be called in the coroutine.");
-    }
-    //suspend
-    if (operation & SOCKET_LOCK_WRITE)
-    {
-        write_locked = true;
+        write_cid = cid;
     }
     if (operation & SOCKET_LOCK_READ)
     {
-        read_locked = true;
+        read_cid = cid;
     }
-    coroutine_yield(coroutine_get_by_id(_cid));
+    //=== yield ===
+
+    coroutine_yield(coroutine_get_by_id(cid));
+
+    //=== resume ===
     if (operation & SOCKET_LOCK_WRITE)
     {
-        write_locked = false;
+        write_cid = 0;
     }
     if (operation & SOCKET_LOCK_READ)
     {
-        read_locked = false;
+        read_cid = 0;
     }
+
     //clear timer
     if (timer)
     {
@@ -870,9 +1053,22 @@ void Socket::yield(int operation)
     }
 }
 
-void Socket::resume()
+void Socket::resume(int operation)
 {
-    coroutine_resume(coroutine_get_by_id(_cid));
+    int cid = 0;
+    if (operation & SOCKET_LOCK_READ)
+    {
+        cid = read_cid;
+    }
+    else if (operation & SOCKET_LOCK_WRITE)
+    {
+        cid = write_cid;
+    }
+    else
+    {
+        assert(0);
+    }
+    coroutine_resume(coroutine_get_by_id(cid));
 }
 
 bool Socket::bind(std::string address, int port)
@@ -881,6 +1077,22 @@ bool Socket::bind(std::string address, int port)
     bind_port = port;
 
     struct sockaddr *sock_type = (struct sockaddr*) &bind_address_info.addr.un;
+
+    int option = 1;
+    if (::setsockopt(socket->fd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(int)) < 0)
+    {
+        swSysError("setsockopt(%d, SO_REUSEADDR) failed.", socket->fd);
+    }
+#ifdef HAVE_REUSEPORT
+    if (SwooleG.reuse_port)
+    {
+        if (::setsockopt(socket->fd, SOL_SOCKET, SO_REUSEPORT, &option, sizeof(int)) < 0)
+        {
+            swSysError("setsockopt(SO_REUSEPORT) failed.");
+            SwooleG.reuse_port = 0;
+        }
+    }
+#endif
 
     int retval;
     switch (_sock_domain)
@@ -968,16 +1180,16 @@ bool Socket::listen(int backlog)
 
 Socket* Socket::accept()
 {
-    if (read_locked || write_locked)
+    if (read_cid || write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return nullptr;
     }
     if (!wait_events(SW_EVENT_READ))
     {
         return nullptr;
     }
-    yield(SOCKET_LOCK_READ | SOCKET_LOCK_WRITE);
+    yield(SOCKET_LOCK_RW);
     if (errCode == ETIMEDOUT)
     {
         return nullptr;
@@ -1026,9 +1238,9 @@ Socket* Socket::accept()
 
 string Socket::resolve(string domain_name)
 {
-    if (read_locked || write_locked)
+    if (read_cid || write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return "";
     }
 
@@ -1073,7 +1285,7 @@ string Socket::resolve(string domain_name)
      */
     double tmp_timeout = _timeout;
     _timeout = -1;
-    yield(SOCKET_LOCK_READ | SOCKET_LOCK_WRITE);
+    yield(SOCKET_LOCK_RW);
     _timeout = tmp_timeout;
 
     if (errCode == SW_ERROR_DNSLOOKUP_RESOLVE_FAILED)
@@ -1091,9 +1303,9 @@ string Socket::resolve(string domain_name)
 
 bool Socket::shutdown(int __how)
 {
-    if (read_locked || write_locked)
+    if (read_cid || write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return false;
     }
     if (!socket || socket->closed)
@@ -1144,11 +1356,17 @@ bool Socket::shutdown(int __how)
 
 bool Socket::close()
 {
-    if (read_locked || write_locked)
+    if (read_cid || write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return false;
     }
+    if (timer)
+    {
+        swTimer_del(&SwooleG.timer, timer);
+        timer = nullptr;
+    }
+
     if (socket == NULL || socket->closed)
     {
         return false;
@@ -1161,7 +1379,6 @@ bool Socket::close()
     {
         unlink(bind_address_info.addr.un.sun_path);
     }
-
 #ifdef SW_USE_OPENSSL
     if (socket->ssl)
     {
@@ -1196,28 +1413,25 @@ bool Socket::close()
         {
             sw_free(ssl_option.capath);
         }
+        ssl_option = {0};
+        ssl_context = nullptr;
     }
 #endif
     if (_sock_type == SW_SOCK_UNIX_DGRAM)
     {
         unlink(socket->info.addr.un.sun_path);
     }
-    if (timer)
-    {
-        swTimer_del(&SwooleG.timer, timer);
-        timer = NULL;
-    }
     socket->active = 0;
-    ::close(fd);
-    return true;
+
+    return ::close(fd) == 0;
 }
 
 #ifdef SW_USE_OPENSSL
 bool Socket::ssl_handshake()
 {
-    if (read_locked || write_locked)
+    if (read_cid || write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return false;
     }
 
@@ -1277,7 +1491,7 @@ bool Socket::ssl_handshake()
             {
                 return false;
             }
-            yield(SOCKET_LOCK_READ | SOCKET_LOCK_WRITE);
+            yield(SOCKET_LOCK_RW);
             if (errCode == ETIMEDOUT)
             {
                 return false;
@@ -1321,7 +1535,7 @@ bool Socket::ssl_accept()
         {
             return false;
         }
-        yield(SOCKET_LOCK_READ | SOCKET_LOCK_WRITE);
+        yield(SOCKET_LOCK_RW);
         if (errCode == ETIMEDOUT)
         {
             return false;
@@ -1345,9 +1559,9 @@ int Socket::ssl_verify(bool allow_self_signed)
 
 bool Socket::sendfile(char *filename, off_t offset, size_t length)
 {
-    if (write_locked)
+    if (write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", write_cid);
         return -1;
     }
     int file_fd = open(filename, O_RDONLY);
@@ -1395,6 +1609,7 @@ bool Socket::sendfile(char *filename, off_t offset, size_t length)
         else if (n == 0)
         {
             swWarn("sendfile return zero.");
+            ::close(file_fd);
             return false;
         }
         else if (errno != EAGAIN)
@@ -1420,9 +1635,9 @@ bool Socket::sendfile(char *filename, off_t offset, size_t length)
 
 ssize_t Socket::sendto(char *address, int port, char *data, int len)
 {
-    if (write_locked)
+    if (write_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", write_cid);
         return -1;
     }
     if (type == SW_SOCK_UDP)
@@ -1448,9 +1663,9 @@ ssize_t Socket::recvfrom(void *__buf, size_t __n)
 
 ssize_t Socket::recvfrom(void *__buf, size_t __n, struct sockaddr* _addr, socklen_t *_socklen)
 {
-    if (read_locked)
+    if (read_cid)
     {
-        swWarn("socket has already been bound to another coroutine.");
+        swWarn("socket has already been bound to another coroutine #%d.", read_cid);
         return -1;
     }
     ssize_t retval;
@@ -1684,6 +1899,20 @@ swString* Socket::get_buffer()
         buffer = swString_new(SW_BUFFER_SIZE_STD);
     }
     return buffer;
+}
+
+int Socket::has_bound(socket_lock_operation type)
+{
+    if ((type &SOCKET_LOCK_READ) && read_cid)
+    {
+        return read_cid;
+    }
+    else if ((type &SOCKET_LOCK_WRITE) && write_cid)
+    {
+        return write_cid;
+    }
+
+    return 0;
 }
 
 Socket::~Socket()

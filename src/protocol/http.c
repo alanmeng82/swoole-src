@@ -14,8 +14,10 @@
  +----------------------------------------------------------------------+
  */
 #include "swoole.h"
+#include "server.h"
 #include "http.h"
 #include "http2.h"
+#include "websocket.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -104,6 +106,54 @@ int swHttpRequest_get_protocol(swHttpRequest *request)
         request->method = HTTP_OPTIONS;
         request->offset = 8;
         buf += 8;
+    }
+    else if (memcmp(buf, "COPY", 4) == 0)
+    {
+        request->method = HTTP_COPY;
+        request->offset = 5;
+        buf += 5;
+    }
+    else if (memcmp(buf, "LOCK", 4) == 0)
+    {
+        request->method = HTTP_LOCK;
+        request->offset = 5;
+        buf += 5;
+    }
+    else if (memcmp(buf, "MKCOL", 5) == 0)
+    {
+        request->method = HTTP_MKCOL;
+        request->offset = 4;
+        buf += 4;
+    }
+    else if (memcmp(buf, "MOVE", 4) == 0)
+    {
+        request->method = HTTP_MOVE;
+        request->offset = 5;
+        buf += 5;
+    }
+    else if (memcmp(buf, "PROPFIND", 8) == 0)
+    {
+        request->method = HTTP_PROPFIND;
+        request->offset = 9;
+        buf += 9;
+    }
+    else if (memcmp(buf, "PROPPATCH", 9) == 0)
+    {
+        request->method = HTTP_PROPPATCH;
+        request->offset = 10;
+        buf += 10;
+    }
+    else if (memcmp(buf, "UNLOCK", 6) == 0)
+    {
+        request->method = HTTP_UNLOCK;
+        request->offset = 7;
+        buf += 7;
+    }
+    else if (memcmp(buf, "REPORT", 6) == 0)
+    {
+        request->method = HTTP_REPORT;
+        request->offset = 7;
+        buf += 7;
     }
 #ifdef SW_USE_HTTP2
     //HTTP2 Connection Preface
@@ -219,7 +269,7 @@ int swHttpRequest_get_header_info(swHttpRequest *request)
         if (*p == '\n' && *(p-1) == '\r')
         {
             p++;
-            if (strncasecmp(p, SW_STRL("Content-Length:") - 1) == 0)
+            if (strncasecmp(p, SW_STRL("Content-Length:")) == 0)
             {
                 // strlen("Content-Length:")
                 p += (sizeof("Content-Length:") - 1);
@@ -231,7 +281,7 @@ int swHttpRequest_get_header_info(swHttpRequest *request)
                 request->content_length = atoi(p);
                 got_len = 1;
             }
-            else if (strncasecmp(p, SW_STRL("Connection:") - 1) == 0)
+            else if (strncasecmp(p, SW_STRL("Connection:")) == 0)
             {
                 // strlen("Connection:")
                 p += (sizeof("Connection:") - 1);
@@ -240,7 +290,7 @@ int swHttpRequest_get_header_info(swHttpRequest *request)
                 {
                     p++;
                 }
-                if (strncasecmp(p, SW_STRL("keep-alive") - 1) == 0)
+                if (strncasecmp(p, SW_STRL("keep-alive")) == 0)
                 {
                     request->keep_alive = 1;
                 }
@@ -269,10 +319,10 @@ int swHttpRequest_has_expect_header(swHttpRequest *request)
         if (*p == '\r' && pe - p > sizeof("\r\nExpect"))
         {
             p += 2;
-            if (strncasecmp(p, SW_STRL("Expect") - 1) == 0)
+            if (strncasecmp(p, SW_STRL("Expect")) == 0)
             {
                 p += sizeof("Expect: ") - 1;
-                if (strncasecmp(p, SW_STRL("100-continue") - 1) == 0)
+                if (strncasecmp(p, SW_STRL("100-continue")) == 0)
                 {
                     return 1;
                 }
@@ -313,4 +363,55 @@ int swHttpRequest_get_header_length(swHttpRequest *request)
         }
     }
     return SW_ERR;
+}
+
+ssize_t swHttpMix_get_package_length(struct _swProtocol *protocol, swConnection *conn, char *data, uint32_t length)
+{
+    if (conn->websocket_status == WEBSOCKET_STATUS_ACTIVE)
+    {
+        return swWebSocket_get_package_length(protocol, conn, data, length);
+    }
+    else if (conn->http2_stream)
+    {
+        return swHttp2_get_frame_length(protocol, conn, data, length);
+    }
+    else
+    {
+        assert(0);
+        return SW_ERR;
+    }
+}
+
+uint8_t swHttpMix_get_package_length_size(swConnection *conn)
+{
+    if (conn->websocket_status == WEBSOCKET_STATUS_ACTIVE)
+    {
+        return SW_WEBSOCKET_HEADER_LEN + SW_WEBSOCKET_MASK_LEN + sizeof(uint64_t);
+    }
+    else if (conn->http2_stream)
+    {
+        return SW_HTTP2_FRAME_HEADER_SIZE;
+    }
+    else
+    {
+        assert(0);
+        return 0;
+    }
+}
+
+int swHttpMix_dispatch_frame(swConnection *conn, char *data, uint32_t length)
+{
+    if (conn->websocket_status == WEBSOCKET_STATUS_ACTIVE)
+    {
+        return swWebSocket_dispatch_frame(conn, data, length);
+    }
+    else if (conn->http2_stream)
+    {
+        return swReactorThread_dispatch(conn, data, length);
+    }
+    else
+    {
+        assert(0);
+        return SW_ERR;
+    }
 }

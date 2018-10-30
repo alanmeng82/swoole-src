@@ -101,7 +101,6 @@ int swReactorProcess_start(swServer *serv)
     serv->gs->event_workers.ptr = serv;
     serv->gs->event_workers.main_loop = swReactorProcess_loop;
     serv->gs->event_workers.type = SW_PROCESS_WORKER;
-    serv->gs->event_workers.run_worker_num = serv->worker_num;
 
     //no worker
     if (serv->worker_num == 1 && serv->task_worker_num == 0 && serv->max_request == 0 && serv->user_worker_list == NULL)
@@ -145,6 +144,12 @@ int swReactorProcess_start(swServer *serv)
      */
     if (serv->user_worker_list)
     {
+        serv->user_workers = sw_malloc(serv->user_worker_num * sizeof(swWorker));
+        if (serv->user_workers == NULL)
+        {
+            swoole_error_log(SW_LOG_ERROR, SW_ERROR_SYSTEM_CALL_FAIL, "gmalloc[server->user_workers] failed.");
+            return SW_ERR;
+        }
         swUserWorker_node *user_worker;
         LL_FOREACH(serv->user_worker_list, user_worker)
         {
@@ -171,9 +176,9 @@ int swReactorProcess_start(swServer *serv)
      */
     SwooleG.use_signalfd = 0;
     SwooleG.use_timer_pipe = 0;
-    swServer_signal_init(serv);
 
     swProcessPool_start(&serv->gs->event_workers);
+    swServer_signal_init(serv);
     swProcessPool_wait(&serv->gs->event_workers);
     swProcessPool_shutdown(&serv->gs->event_workers);
 
@@ -252,7 +257,7 @@ static int swReactorProcess_loop(swProcessPool *pool, swWorker *worker)
 
     swServer_worker_init(serv, worker);
 
-    int n_buffer = serv->worker_num + serv->task_worker_num;
+    int n_buffer = serv->worker_num + serv->task_worker_num + serv->user_worker_num;
     SwooleWG.buffer_output = sw_malloc(sizeof(swString*) * n_buffer);
     if (SwooleWG.buffer_output == NULL)
     {
@@ -442,7 +447,7 @@ int swReactorProcess_onClose(swReactor *reactor, swEvent *event)
 
 static int swReactorProcess_send2worker(int pipe_fd, void *data, int length)
 {
-    if (swIsTaskWorker())
+    if (!SwooleG.main_reactor)
     {
         return swSocket_write_blocking(pipe_fd, data, length);
     }

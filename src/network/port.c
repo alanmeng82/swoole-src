@@ -170,20 +170,27 @@ void swPort_set_protocol(swListenPort *ls)
     }
     else if (ls->open_http_protocol)
     {
-        if (ls->open_websocket_protocol)
-        {
-            ls->protocol.get_package_length = swWebSocket_get_package_length;
-            ls->protocol.onPackage = swWebSocket_dispatch_frame;
-            ls->protocol.package_length_size = SW_WEBSOCKET_HEADER_LEN + SW_WEBSOCKET_MASK_LEN + sizeof(uint64_t);
-        }
 #ifdef SW_USE_HTTP2
+        if (ls->open_http2_protocol && ls->open_websocket_protocol)
+        {
+            ls->protocol.get_package_length = swHttpMix_get_package_length;
+            ls->protocol.get_package_length_size = swHttpMix_get_package_length_size;
+            ls->protocol.onPackage = swHttpMix_dispatch_frame;
+        }
         else if (ls->open_http2_protocol)
         {
             ls->protocol.get_package_length = swHttp2_get_frame_length;
             ls->protocol.package_length_size = SW_HTTP2_FRAME_HEADER_SIZE;
             ls->protocol.onPackage = swReactorThread_dispatch;
         }
+        else
 #endif
+        if (ls->open_websocket_protocol)
+        {
+            ls->protocol.get_package_length = swWebSocket_get_package_length;
+            ls->protocol.package_length_size = SW_WEBSOCKET_HEADER_LEN + SW_WEBSOCKET_MASK_LEN + sizeof(uint64_t);
+            ls->protocol.onPackage = swWebSocket_dispatch_frame;
+        }
         ls->onRead = swPort_onRead_http;
     }
     else if (ls->open_mqtt_protocol)
@@ -371,8 +378,8 @@ static int swPort_onRead_http(swReactor *reactor, swListenPort *port, swEvent *e
                 return SW_OK;
             }
             swoole_error_log(SW_LOG_TRACE, SW_ERROR_HTTP_INVALID_PROTOCOL, "get protocol failed.");
-#ifdef SW_HTTP_BAD_REQUEST
-            if (swConnection_send(conn, SW_STRL(SW_HTTP_BAD_REQUEST) - 1, 0) < 0)
+#ifdef SW_HTTP_BAD_REQUEST_TIP
+            if (swConnection_send(conn, SW_STRL(SW_HTTP_BAD_REQUEST_TIP), 0) < 0)
             {
                 swSysError("send() failed.");
             }
@@ -567,7 +574,10 @@ void swPort_free(swListenPort *port)
 #ifdef SW_USE_OPENSSL
     if (port->ssl)
     {
-        swSSL_free_context(port->ssl_context);
+        if (port->ssl_context)
+        {
+            swSSL_free_context(port->ssl_context);
+        }
         sw_free(port->ssl_option.cert_file);
         sw_free(port->ssl_option.key_file);
         if (port->ssl_option.client_cert_file)
@@ -640,7 +650,7 @@ int swPort_http_static_handler(swHttpRequest *request, swConnection *conn)
         switch(state)
         {
         case 0:
-            if (strncasecmp(p, SW_STRL("If-Modified-Since") - 1) == 0)
+            if (strncasecmp(p, SW_STRL("If-Modified-Since")) == 0)
             {
                 p += sizeof("If-Modified-Since");
                 state = 1;
@@ -654,7 +664,7 @@ int swPort_http_static_handler(swHttpRequest *request, swConnection *conn)
             }
             break;
         case 2:
-            if (strncasecmp(p, SW_STRL("\r\n") - 1) == 0)
+            if (strncasecmp(p, SW_STRL("\r\n")) == 0)
             {
                 length_if_modified_since = p - date_if_modified_since;
                 goto check_modify_date;

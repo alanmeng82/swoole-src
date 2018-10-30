@@ -102,7 +102,7 @@ ZEND_END_ARG_INFO()
 
 static const zend_function_entry swoole_postgresql_coro_methods[] =
 {
-    PHP_ME(swoole_postgresql_coro, __construct, arginfo_swoole_void, ZEND_ACC_PUBLIC | ZEND_ACC_CTOR)
+    PHP_ME(swoole_postgresql_coro, __construct, arginfo_swoole_void, ZEND_ACC_PUBLIC)
     PHP_ME(swoole_postgresql_coro, connect, arginfo_pg_connect, ZEND_ACC_PUBLIC)
     PHP_ME(swoole_postgresql_coro, query, arginfo_pg_query, ZEND_ACC_PUBLIC )
     PHP_ME(swoole_postgresql_coro, fetchAll, arginfo_pg_fetch_all, ZEND_ACC_PUBLIC)
@@ -113,7 +113,7 @@ static const zend_function_entry swoole_postgresql_coro_methods[] =
     PHP_ME(swoole_postgresql_coro, fetchAssoc, arginfo_pg_fetch_assoc, ZEND_ACC_PUBLIC)
     PHP_ME(swoole_postgresql_coro, fetchArray, arginfo_pg_fetch_array, ZEND_ACC_PUBLIC)
     PHP_ME(swoole_postgresql_coro, fetchRow, arginfo_pg_fetch_row, ZEND_ACC_PUBLIC)
-    PHP_ME(swoole_postgresql_coro, __destruct, arginfo_swoole_void, ZEND_ACC_PUBLIC | ZEND_ACC_DTOR)
+    PHP_ME(swoole_postgresql_coro, __destruct, arginfo_swoole_void, ZEND_ACC_PUBLIC)
     PHP_FE_END
 };
 
@@ -121,13 +121,13 @@ static zend_class_entry swoole_postgresql_coro_ce;
 static zend_class_entry *swoole_postgresql_coro_class_entry_ptr;
 static int le_link , le_result;
 
-void swoole_postgresql_coro_init(int module_number TSRMLS_DC)
+void swoole_postgresql_coro_init(int module_number)
 {
 
     INIT_CLASS_ENTRY(swoole_postgresql_coro_ce, "Swoole\\Coroutine\\PostgreSQL", swoole_postgresql_coro_methods);
     le_link = zend_register_list_destructors_ex(_destroy_pgsql_link, NULL, "pgsql link", module_number);
     le_result = zend_register_list_destructors_ex(_free_result, NULL, "pgsql result", module_number);
-    swoole_postgresql_coro_class_entry_ptr = zend_register_internal_class(&swoole_postgresql_coro_ce TSRMLS_CC);
+    swoole_postgresql_coro_class_entry_ptr = zend_register_internal_class(&swoole_postgresql_coro_ce);
 
     if (SWOOLE_G(use_shortname))
     {
@@ -142,7 +142,7 @@ void swoole_postgresql_coro_init(int module_number TSRMLS_DC)
 
 static PHP_METHOD(swoole_postgresql_coro, __construct)
 {
-    coro_check(TSRMLS_C);
+    coro_check();
     pg_object *pg;
     pg = emalloc(sizeof(pg_object));
     bzero(pg,sizeof(pg_object));
@@ -157,7 +157,7 @@ static PHP_METHOD(swoole_postgresql_coro, connect)
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_ZVAL(conninfo)
-    ZEND_PARSE_PARAMETERS_END();
+    ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
     pgsql = PQconnectStart(Z_STRVAL_P(conninfo));
     int fd =  PQsocket(pgsql);
@@ -263,7 +263,7 @@ static void swoole_pgsql_coro_onTimeout(swTimer *timer, swTimer_node *tnode)
     int ret = coro_resume(ctx, result, &retval);
     if (ret == CORO_END && retval)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
     zval_ptr_dtor(result);
 }
@@ -341,7 +341,7 @@ static int swoole_pgsql_coro_onWrite(swReactor *reactor, swEvent *event)
     int ret = coro_resume(sw_current_context, &return_value, &retval);
     if (ret == CORO_END && retval)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
     return SW_OK;
 }
@@ -426,10 +426,9 @@ static  int meta_data_result_parse(pg_object *pg_object)
     int ret  = coro_resume(sw_current_context, &return_value, &retval);
     if (ret == CORO_END && retval)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
     zval_ptr_dtor(&return_value);
-    zval_ptr_dtor(&elem);
     return SW_OK;
 }
 
@@ -466,7 +465,7 @@ static  int query_result_parse(pg_object *pg_object)
             ret = coro_resume(sw_current_context, &return_value,  &retval);
             if (ret == CORO_END && retval)
             {
-                sw_zval_ptr_dtor(&retval);
+                zval_ptr_dtor(retval);
             }
             swoole_postgresql_coro_close(pg_object);
             break;
@@ -481,7 +480,7 @@ static  int query_result_parse(pg_object *pg_object)
             ret = coro_resume(sw_current_context, &return_value,  &retval);
             if (ret == CORO_END && retval)
             {
-                sw_zval_ptr_dtor(&retval);
+                zval_ptr_dtor(retval);
             }
             PQclear(pgsql_result);
 
@@ -504,7 +503,7 @@ static PHP_METHOD(swoole_postgresql_coro, query)
 
     ZEND_PARSE_PARAMETERS_START(1,1)
         Z_PARAM_ZVAL(query)
-    ZEND_PARSE_PARAMETERS_END();
+    ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
     pg_object *pg_object = swoole_get_object(getThis());
     pg_object->request_type = NORMAL_QUERY;
@@ -602,7 +601,7 @@ static PHP_METHOD(swoole_postgresql_coro, fetchAll)
         Z_PARAM_RESOURCE(result)
         Z_PARAM_OPTIONAL
         Z_PARAM_LONG(result_type)
-    ZEND_PARSE_PARAMETERS_END();
+    ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
     if ((object = (pg_object *)zend_fetch_resource(Z_RES_P(result), "PostgreSQL result", le_result)) == NULL)
     {
@@ -626,7 +625,7 @@ static PHP_METHOD(swoole_postgresql_coro,affectedRows)
 
     ZEND_PARSE_PARAMETERS_START(1,1)
         Z_PARAM_RESOURCE(result)
-    ZEND_PARSE_PARAMETERS_END();
+    ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
     if ((object = (pg_object *)zend_fetch_resource(Z_RES_P(result), "PostgreSQL result", le_result)) == NULL)
     {
@@ -647,7 +646,7 @@ static PHP_METHOD(swoole_postgresql_coro,numRows)
 
     ZEND_PARSE_PARAMETERS_START(1,1)
         Z_PARAM_RESOURCE(result)
-    ZEND_PARSE_PARAMETERS_END();
+    ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
     if ((object = (pg_object *)zend_fetch_resource(Z_RES_P(result), "PostgreSQL result", le_result)) == NULL)
     {
@@ -675,7 +674,7 @@ static PHP_METHOD(swoole_postgresql_coro,metaData)
 
     ZEND_PARSE_PARAMETERS_START(1,1)
         Z_PARAM_STRING(table_name, table_name_len)
-    ZEND_PARSE_PARAMETERS_END();
+    ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
     pg_object *pg_object = swoole_get_object(getThis());
     pg_object->request_type = META_DATA;
@@ -794,7 +793,7 @@ static void php_pgsql_fetch_hash(INTERNAL_FUNCTION_PARAMETERS, zend_long result_
 
         if (zend_parse_parameters(ZEND_NUM_ARGS(), "r|z!Sz", &result, &zrow, &class_name, &ctor_params) == FAILURE)
         {
-            return;
+            RETURN_FALSE;
         }
         if (!class_name)
         {
@@ -813,7 +812,7 @@ static void php_pgsql_fetch_hash(INTERNAL_FUNCTION_PARAMETERS, zend_long result_
     {
         if (zend_parse_parameters(ZEND_NUM_ARGS(), "r|z!l", &result, &zrow, &result_type) == FAILURE)
         {
-            return;
+            RETURN_FALSE;
         }
     }
     if (zrow == NULL)
@@ -1049,7 +1048,7 @@ static int swoole_pgsql_coro_onError(swReactor *reactor, swEvent *event)
 
     if (ret == CORO_END && retval)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
 
     return SW_OK;

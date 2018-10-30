@@ -26,7 +26,6 @@
 
 coro_global COROG;
 static void sw_coro_func(void *);
-static zend_bool is_xdebug_started = 0;
 
 #if PHP_VERSION_ID >= 70200
 static inline void sw_vm_stack_init(void)
@@ -47,11 +46,11 @@ static inline void sw_vm_stack_init(void)
 #define sw_vm_stack_init zend_vm_stack_init
 #endif
 
-int coro_init(TSRMLS_D)
+int coro_init(void)
 {
     if (zend_get_module_started("xdebug") == SUCCESS)
     {
-        is_xdebug_started = 1;
+        swWarn("xdebug do not support coroutine, please notice that it lead to coredump.");
     }
     //save init vm
     COROG.origin_vm_stack = EG(vm_stack);
@@ -102,9 +101,7 @@ static void save_php_stack(coro_task *task)
     EG(vm_stack) = task->origin_stack;
     EG(vm_stack_top) = task->origin_vm_stack_top;
     EG(vm_stack_end) = task->origin_vm_stack_end;
-#if PHP_VERSION_ID < 70100
-    EG(scope) = task->execute_data->func->common.scope;
-#endif
+    SW_RESUME_EG_SCOPE(task->execute_data->func->common.scope);
 }
 void internal_coro_resume(void *arg)
 {
@@ -147,7 +144,7 @@ void internal_coro_yield(void *arg)
     }
 }
 
-void coro_check(TSRMLS_D)
+void coro_check(void)
 {
     if (unlikely(!sw_coro_is_in()))
     {
@@ -155,9 +152,23 @@ void coro_check(TSRMLS_D)
     }
 }
 
-void coro_destroy(TSRMLS_D)
+void coro_destroy(void)
 {
 
+}
+
+void sw_coro_check_bind(const char *name, int bind_cid)
+{
+    if (unlikely((bind_cid) > 0))
+    {
+        swString *buffer = SwooleTG.buffer_stack;
+        sw_get_debug_print_backtrace(SwooleTG.buffer_stack, DEBUG_BACKTRACE_IGNORE_ARGS, 3);
+        swError(
+            "%s has already been bound to another coroutine #%d, "
+            "reading or writing of the same socket in multiple coroutines at the same time is not allowed.\n"
+            "%.*s", name, bind_cid, (int) buffer->length, buffer->str
+        );
+    }
 }
 
 static void sw_coro_func(void *arg)
@@ -235,17 +246,17 @@ static void sw_coro_func(void *arg)
     EG(vm_stack) = task->stack;
     EG(vm_stack_top) = task->vm_stack_top;
     EG(vm_stack_end) = task->vm_stack_end;
-    zend_execute_ex(EG(current_execute_data) TSRMLS_CC);
+    zend_execute_ex(EG(current_execute_data));
+
+    if (EG(exception))
+    {
+        zend_exception_error(EG(exception), E_ERROR);
+    }
 }
 
 int sw_coro_create(zend_fcall_info_cache *fci_cache, zval **argv, int argc, zval *retval, void *post_callback,
         void *params)
 {
-    if (unlikely(is_xdebug_started == 1))
-    {
-        swWarn("xdebug do not support coroutine, please notice that it lead to coredump.");
-    }
-
     if (unlikely(COROG.coro_num >= COROG.max_coro_num) )
     {
         COROG.error = 1;
@@ -347,7 +358,7 @@ int sw_coro_resume(php_context *sw_current_context, zval *retval, zval *coro_ret
         {
             zval_ptr_dtor(retval);
         }
-        zend_exception_error(EG(exception), E_ERROR TSRMLS_CC);
+        zend_exception_error(EG(exception), E_ERROR);
     }
     return CORO_END;
 }

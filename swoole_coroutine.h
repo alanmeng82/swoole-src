@@ -8,6 +8,15 @@ extern "C" {
 #include "zend_vm.h"
 #include "zend_closures.h"
 
+/* PHP 7.0 compatibility macro {{{*/
+#if PHP_VERSION_ID < 70100
+#define SW_SAVE_EG_SCOPE(_scope) zend_class_entry *_scope = EG(scope)
+#define SW_RESUME_EG_SCOPE(_scope) EG(scope) = _scope
+#else
+#define SW_SAVE_EG_SCOPE(scope)
+#define SW_RESUME_EG_SCOPE(scope)
+#endif/*}}}*/
+
 /* PHP 7.3 compatibility macro {{{*/
 #ifndef ZEND_CLOSURE_OBJECT
 # define ZEND_CLOSURE_OBJECT(func) (zend_object*)func->op_array.prototype
@@ -111,9 +120,9 @@ typedef struct _swTimer_coro_callback
 extern coro_global COROG;
 
 int sw_get_current_cid();
-int coro_init(TSRMLS_D);
-void coro_destroy(TSRMLS_D);
-void coro_check(TSRMLS_D);
+int coro_init(void);
+void coro_destroy(void);
+void coro_check(void);
 
 #define sw_coro_is_in() (sw_get_current_cid() != -1)
 #define coro_create(op_array, argv, argc, retval, post_callback, param) \
@@ -136,8 +145,8 @@ void sw_coro_save(zval *return_value, php_context *sw_php_context);
 void sw_coro_set_stack_size(int stack_size);
 
 extern int swoole_coroutine_sleep(double msec);
-int php_swoole_add_timer_coro(int ms, int cli_fd, long *timeout_id, void* param, swLinkedList_node **node TSRMLS_DC);
-int php_swoole_clear_timer_coro(long id TSRMLS_DC);
+int php_swoole_add_timer_coro(int ms, int cli_fd, long *timeout_id, void* param, swLinkedList_node **node);
+int php_swoole_clear_timer_coro(long id);
 
 #ifdef __cplusplus
 }  /* end extern "C" */

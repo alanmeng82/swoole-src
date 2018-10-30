@@ -6,7 +6,7 @@ require __DIR__ . '/../include/skipif.inc';
 ?>
 --FILE--
 <?php
-require_once __DIR__ . '/../include/bootstrap.php';
+require __DIR__ . '/../include/bootstrap.php';
 
 swoole\runtime::enableCoroutine();
 
@@ -24,6 +24,8 @@ go(function () {
         $data = $client->recv();
         $client->send("Swoole: $data");
     }
+
+    usleep(1000);
 });
 
 go(function () {

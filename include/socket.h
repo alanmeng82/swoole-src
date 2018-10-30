@@ -25,7 +25,9 @@ namespace swoole
 {
 enum socket_lock_operation
 {
-    SOCKET_LOCK_READ = 1u << 1, SOCKET_LOCK_WRITE = 1U << 2,
+    SOCKET_LOCK_READ = 1u << 1,
+    SOCKET_LOCK_WRITE = 1U << 2,
+    SOCKET_LOCK_RW = SOCKET_LOCK_READ | SOCKET_LOCK_WRITE
 };
 
 class Socket
@@ -33,6 +35,7 @@ class Socket
 public:
     Socket(enum swSocket_type type);
     Socket(int _fd, Socket *sock);
+    Socket(int _fd, enum swSocket_type _type);
     ~Socket();
     bool connect(std::string host, int port, int flags = 0);
     bool connect(const struct sockaddr *addr, socklen_t addrlen);
@@ -42,12 +45,14 @@ public:
     ssize_t sendmsg(const struct msghdr *msg, int flags);
     ssize_t peek(void *__buf, size_t __n);
     ssize_t recv(void *__buf, size_t __n);
+    ssize_t read(void *__buf, size_t __n);
+    ssize_t write(const void *__buf, size_t __n);
     ssize_t recvmsg(struct msghdr *msg, int flags);
     ssize_t recv_all(void *__buf, size_t __n);
     ssize_t send_all(const void *__buf, size_t __n);
     ssize_t recv_packet();
     Socket* accept();
-    void resume();
+    void resume(int operation);
     void yield(int operation);
     bool bind(std::string address, int port = 0);
     std::string resolve(std::string host);
@@ -57,6 +62,7 @@ public:
     ssize_t recvfrom(void *__buf, size_t __n);
     ssize_t recvfrom(void *__buf, size_t __n, struct sockaddr *_addr, socklen_t *_socklen);
     swString* get_buffer();
+    int has_bound(socket_lock_operation type);
 
     inline void setTimeout(double timeout)
     {
@@ -82,9 +88,8 @@ public:
 protected:
     inline void init()
     {
-        _cid = 0;
-        read_locked = false;
-        write_locked = false;
+        read_cid = 0;
+        write_cid = 0;
         _timeout = 0;
         _port = 0;
         errCode = 0;
@@ -150,9 +155,8 @@ public:
     std::string bind_address;
     int bind_port;
     int _port;
-    int _cid;
-    bool read_locked;
-    bool write_locked;
+    int read_cid;
+    int write_cid;
     swConnection *socket = nullptr;
     enum swSocket_type type;
     int _sock_type;

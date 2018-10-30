@@ -46,7 +46,7 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_swoole_channel_coro_push, 0, 0, 1)
     ZEND_ARG_INFO(0, data)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_swoole_channel_coro_pop, 0, 0, 1)
+ZEND_BEGIN_ARG_INFO_EX(arginfo_swoole_channel_coro_pop, 0, 0, 0)
     ZEND_ARG_INFO(0, timeout)
 ZEND_END_ARG_INFO()
 
@@ -55,8 +55,8 @@ ZEND_END_ARG_INFO()
 
 static const zend_function_entry swoole_channel_coro_methods[] =
 {
-    PHP_ME(swoole_channel_coro, __construct, arginfo_swoole_channel_coro_construct, ZEND_ACC_PUBLIC | ZEND_ACC_CTOR)
-    PHP_ME(swoole_channel_coro, __destruct, arginfo_swoole_void, ZEND_ACC_PUBLIC | ZEND_ACC_DTOR)
+    PHP_ME(swoole_channel_coro, __construct, arginfo_swoole_channel_coro_construct, ZEND_ACC_PUBLIC)
+    PHP_ME(swoole_channel_coro, __destruct, arginfo_swoole_void, ZEND_ACC_PUBLIC)
     PHP_ME(swoole_channel_coro, push, arginfo_swoole_channel_coro_push, ZEND_ACC_PUBLIC)
     PHP_ME(swoole_channel_coro, pop,  arginfo_swoole_channel_coro_pop,  ZEND_ACC_PUBLIC)
     PHP_ME(swoole_channel_coro, isEmpty, arginfo_swoole_void, ZEND_ACC_PUBLIC)
@@ -67,7 +67,7 @@ static const zend_function_entry swoole_channel_coro_methods[] =
     PHP_FE_END
 };
 
-void swoole_channel_coro_init(int module_number TSRMLS_DC)
+void swoole_channel_coro_init(int module_number)
 {
     INIT_CLASS_ENTRY(swoole_channel_coro_ce, "Swoole\\Coroutine\\Channel", swoole_channel_coro_methods);
     swoole_channel_coro_class_entry_ptr = zend_register_internal_class(&swoole_channel_coro_ce);
@@ -77,8 +77,8 @@ void swoole_channel_coro_init(int module_number TSRMLS_DC)
         sw_zend_register_class_alias("chan", swoole_channel_coro_class_entry_ptr);
     }
 
-    zend_declare_property_long(swoole_channel_coro_class_entry_ptr, SW_STRL("capacity")-1, 0, ZEND_ACC_PUBLIC);
-    zend_declare_property_long(swoole_channel_coro_class_entry_ptr, SW_STRL("errCode")-1, 0, ZEND_ACC_PUBLIC);
+    zend_declare_property_long(swoole_channel_coro_class_entry_ptr, ZEND_STRL("capacity"), 0, ZEND_ACC_PUBLIC);
+    zend_declare_property_long(swoole_channel_coro_class_entry_ptr, ZEND_STRL("errCode"), 0, ZEND_ACC_PUBLIC);
 }
 
 static PHP_METHOD(swoole_channel_coro, __construct)
@@ -121,12 +121,12 @@ static PHP_METHOD(swoole_channel_coro, __destruct)
 
 static PHP_METHOD(swoole_channel_coro, push)
 {
-    coro_check(TSRMLS_C);
+    coro_check();
 
     Channel *chan = (Channel *) swoole_get_object(getThis());
     if (chan->closed)
     {
-        zend_update_property_long(swoole_channel_coro_class_entry_ptr, getThis(), SW_STRL("errCode")-1, -2);
+        zend_update_property_long(swoole_channel_coro_class_entry_ptr, getThis(), ZEND_STRL("errCode"), -2);
         RETURN_FALSE;
     }
 
@@ -150,12 +150,12 @@ static PHP_METHOD(swoole_channel_coro, push)
 
 static PHP_METHOD(swoole_channel_coro, pop)
 {
-    coro_check(TSRMLS_C);
+    coro_check();
 
     Channel *chan = (Channel *) swoole_get_object(getThis());
     if (chan->closed)
     {
-        zend_update_property_long(swoole_channel_coro_class_entry_ptr, getThis(), SW_STRL("errCode")-1, -2);
+        zend_update_property_long(swoole_channel_coro_class_entry_ptr, getThis(), ZEND_STRL("errCode"), -2);
         RETURN_FALSE;
     }
 
@@ -172,7 +172,7 @@ static PHP_METHOD(swoole_channel_coro, pop)
     }
     else
     {
-        zend_update_property_long(swoole_channel_coro_class_entry_ptr, getThis(), SW_STRL("errCode")-1, chan->closed ? -2 : -1);
+        zend_update_property_long(swoole_channel_coro_class_entry_ptr, getThis(), ZEND_STRL("errCode"), chan->closed ? -2 : -1);
         RETURN_FALSE;
     }
 }
@@ -205,11 +205,11 @@ static PHP_METHOD(swoole_channel_coro, stats)
 {
     Channel *chan = (Channel *) swoole_get_object(getThis());
     array_init(return_value);
-    sw_add_assoc_long_ex(return_value, ZEND_STRS("consumer_num"), chan->consumer_num());
-    sw_add_assoc_long_ex(return_value, ZEND_STRS("producer_num"), chan->producer_num());
+    add_assoc_long_ex(return_value, ZEND_STRL("consumer_num"), chan->consumer_num());
+    add_assoc_long_ex(return_value, ZEND_STRL("producer_num"), chan->producer_num());
     if (chan)
     {
-        sw_add_assoc_long_ex(return_value, ZEND_STRS("queue_num"), chan->length());
+        add_assoc_long_ex(return_value, ZEND_STRL("queue_num"), chan->length());
     }
 }
 

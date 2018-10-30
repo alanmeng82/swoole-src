@@ -159,7 +159,7 @@ int swServer_master_onAccept(swReactor *reactor, swEvent *event)
             return SW_OK;
         }
 
-        if (serv->factory_mode == SW_MODE_SINGLE)
+        if (serv->factory_mode == SW_MODE_BASE)
         {
             reactor_id = 0;
         }
@@ -300,7 +300,7 @@ static int swServer_start_check(swServer *serv)
     /**
      * OpenSSL thread-safe
      */
-    if (serv->factory_mode != SW_MODE_SINGLE)
+    if (serv->factory_mode != SW_MODE_BASE)
     {
         swSSL_init_thread_safety();
     }
@@ -468,7 +468,7 @@ swString** swServer_create_worker_buffer(swServer *serv)
     int i;
     int buffer_num;
 
-    if (serv->factory_mode == SW_MODE_SINGLE)
+    if (serv->factory_mode == SW_MODE_BASE)
     {
         buffer_num = 1;
     }
@@ -772,7 +772,7 @@ int swServer_start(swServer *serv)
         ret = snprintf(SwooleTG.buffer_stack->str, SwooleTG.buffer_stack->size, "%d", getpid());
         swoole_file_put_contents(serv->pid_file, SwooleTG.buffer_stack->str, ret);
     }
-    if (serv->factory_mode == SW_MODE_SINGLE)
+    if (serv->factory_mode == SW_MODE_BASE)
     {
         ret = swReactorProcess_start(serv);
     }
@@ -813,7 +813,7 @@ void swServer_init(swServer *serv)
     //http server
     serv->http_parse_post = 1;
     serv->http_compression = 1;
-    serv->http_gzip_level = 1;
+    serv->http_compression_level = 1; // Z_BEST_SPEED
     serv->upload_tmp_dir = sw_strdup("/tmp");
 
     //heartbeat check
@@ -866,7 +866,7 @@ int swServer_create(swServer *serv)
     }
 #endif
 
-    if (serv->factory_mode == SW_MODE_SINGLE)
+    if (serv->factory_mode == SW_MODE_BASE)
     {
         return swReactorProcess_create(serv);
     }
@@ -910,7 +910,7 @@ int swServer_free(swServer *serv)
             swSysError("pthread_join(%ld) failed.", (ulong_t )serv->heartbeat_pidt);
         }
     }
-    if (serv->factory_mode == SW_MODE_SINGLE)
+    if (serv->factory_mode == SW_MODE_BASE)
     {
         swTraceLog(SW_TRACE_SERVER, "terminate task workers.");
         if (serv->task_worker_num > 0)
@@ -1021,22 +1021,11 @@ void swServer_store_pipe_fd(swServer *serv, swPipe *p)
     }
 }
 
-void swServer_close_listen_port(swServer *serv)
-{
-    swListenPort *ls;
-    LL_FOREACH(serv->listen_list, ls)
-    {
-        if (swSocket_is_stream(ls->type))
-        {
-            close(ls->sock);
-        }
-    }
-}
-
 swPipe * swServer_get_pipe_object(swServer *serv, int pipe_fd)
 {
     return (swPipe *) serv->connection_list[pipe_fd].object;
 }
+
 
 int swServer_tcp_send(swServer *serv, int fd, void *data, uint32_t length)
 {
@@ -1212,7 +1201,7 @@ void swServer_signal_init(swServer *serv)
 {
     swSignal_add(SIGPIPE, NULL);
     swSignal_add(SIGHUP, NULL);
-    if (serv->factory_mode != SW_MODE_BASE)
+    if (serv->factory_mode == SW_MODE_PROCESS)
     {
         swSignal_add(SIGCHLD, swServer_signal_hanlder);
     }
@@ -1601,7 +1590,7 @@ static void swServer_signal_hanlder(int sig)
         {
             break;
         }
-        if (SwooleG.serv->factory_mode == SW_MODE_SINGLE)
+        if (SwooleG.serv->factory_mode == SW_MODE_BASE)
         {
             break;
         }
@@ -1622,7 +1611,7 @@ static void swServer_signal_hanlder(int sig)
          */
     case SIGUSR1:
     case SIGUSR2:
-        if (SwooleG.serv->factory_mode == SW_MODE_SINGLE)
+        if (SwooleG.serv->factory_mode == SW_MODE_BASE)
         {
             if (serv->gs->event_workers.reloading)
             {
@@ -1719,7 +1708,7 @@ static void swHeartbeatThread_loop(swThreadParam *param)
 
                 if (serv->factory_mode != SW_MODE_PROCESS)
                 {
-                    if (serv->factory_mode == SW_MODE_SINGLE)
+                    if (serv->factory_mode == SW_MODE_BASE)
                     {
                         reactor = SwooleG.main_reactor;
                     }
@@ -1797,7 +1786,7 @@ static swConnection* swServer_connection_new(swServer *serv, swListenPort *ls, i
     }
 
     connection->fd = fd;
-    connection->from_id = serv->factory_mode == SW_MODE_SINGLE ? SwooleWG.id : reactor_id;
+    connection->from_id = serv->factory_mode == SW_MODE_BASE ? SwooleWG.id : reactor_id;
     connection->from_fd = (sw_atomic_t) from_fd;
     connection->connect_time = serv->gs->now;
     connection->last_time = serv->gs->now;
@@ -1805,7 +1794,7 @@ static swConnection* swServer_connection_new(swServer *serv, swListenPort *ls, i
     connection->buffer_size = ls->socket_buffer_size;
 
 #ifdef SW_REACTOR_SYNC_SEND
-    if (serv->factory_mode != SW_MODE_THREAD && !ls->ssl)
+    if (!ls->ssl)
     {
         connection->direct_send = 1;
     }

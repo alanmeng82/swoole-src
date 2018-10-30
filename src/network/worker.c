@@ -28,7 +28,6 @@ static int swWorker_onStreamAccept(swReactor *reactor, swEvent *event);
 static int swWorker_onStreamRead(swReactor *reactor, swEvent *event);
 static int swWorker_onStreamPackage(swConnection *conn, char *data, uint32_t length);
 static int swWorker_onStreamClose(swReactor *reactor, swEvent *event);
-static void swWorker_stop();
 
 int swWorker_create(swWorker *worker)
 {
@@ -86,7 +85,7 @@ void swWorker_signal_handler(int signo)
          */
         if (SwooleG.main_reactor)
         {
-            swWorker_stop();
+            swWorker_stop(SwooleWG.worker);
         }
         /**
          * Task worker
@@ -436,7 +435,7 @@ int swWorker_onTask(swFactory *factory, swEventData *task)
     //maximum number of requests, process will exit.
     if (!SwooleWG.run_always && worker->request_count >= SwooleWG.max_request)
     {
-        swWorker_stop();
+        swWorker_stop(worker);
     }
     return SW_OK;
 }
@@ -555,9 +554,8 @@ void swWorker_onStop(swServer *serv)
     }
 }
 
-static void swWorker_stop()
+void swWorker_stop(swWorker *worker)
 {
-    swWorker *worker = SwooleWG.worker;
     swServer *serv = SwooleG.serv;
     worker->status = SW_WORKER_BUSY;
 
@@ -596,7 +594,7 @@ static void swWorker_stop()
         serv->onWorkerStop = NULL;
     }
 
-    if (serv->factory_mode == SW_MODE_SINGLE)
+    if (serv->factory_mode == SW_MODE_BASE)
     {
         swListenPort *port;
         LL_FOREACH(serv->listen_list, port)
@@ -654,7 +652,7 @@ void swWorker_try_to_exit()
     swDNSResolver_free();
 
     //close all client connections
-    if (serv->factory_mode == SW_MODE_SINGLE)
+    if (serv->factory_mode == SW_MODE_BASE)
     {
         int find_fd = swServer_get_minfd(serv);
         int max_fd = swServer_get_maxfd(serv);

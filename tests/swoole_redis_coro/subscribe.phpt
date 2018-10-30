@@ -1,12 +1,10 @@
 --TEST--
 swoole_redis_coro: redis subscribe
 --SKIPIF--
-<?php require __DIR__ . '/../include/skipif.inc';
-?>
+<?php require __DIR__ . '/../include/skipif.inc'; ?>
 --FILE--
 <?php
-require_once __DIR__ . '/../include/bootstrap.php';
-require_once __DIR__ . '/../include/lib/curl.php';
+require __DIR__ . '/../include/bootstrap.php';
 
 use Swoole\Coroutine as co;
 

@@ -48,45 +48,37 @@ typedef struct
     zval _response_object;
 
     // flow control
-    uint32_t send_window;
-    uint32_t recv_window;
+    uint32_t remote_window_size;
+    uint32_t local_window_size;
 
 } http2_client_stream;
 
 typedef struct
 {
+
+    char *host;
+    size_t host_len;
+    int port;
     uint8_t ssl;
-    uint8_t connecting;
-    uint8_t ready;
+    double timeout;
+    zval *object;
 
 #ifdef SW_COROUTINE
+    int read_cid;
+    // int write_cid; // useless temporarily
     uint8_t iowait;
-    int cid;
     swClient *client;
 #endif
+
+    nghttp2_hd_inflater *inflater;
+    nghttp2_hd_deflater *deflater;
 
     uint32_t stream_id; // the next send stream id
     uint32_t last_stream_id; // the last received stream id
 
-    // flow control
-    uint32_t send_window;
-    uint32_t recv_window;
+    swHttp2_settings local_settings;
+    swHttp2_settings remote_settings;
 
-    uint32_t max_concurrent_streams;
-    uint32_t max_frame_size;
-    uint32_t max_header_list_size;
-
-    char *host;
-    zend_size_t host_len;
-    int port;
-
-    nghttp2_hd_inflater *inflater;
-    nghttp2_hd_deflater *deflater;
-    zval *object;
-    double timeout;
-
-    swLinkedList *requests;
-    swLinkedList *stream_requests;
     swHashMap *streams;
 
 } http2_client_property;
@@ -107,7 +99,7 @@ static sw_inline void http2_client_init_gzip_stream(http2_client_stream *stream)
 
 int http2_client_parse_header(http2_client_property *hcc, http2_client_stream *stream , int flags, char *in, size_t inlen);
 
-static sw_inline void http2_client_send_setting(swClient *cli)
+static sw_inline void http2_client_send_setting(swClient *cli, swHttp2_settings  *settings)
 {
     uint16_t id = 0;
     uint32_t value = 0;
@@ -123,7 +115,7 @@ static sw_inline void http2_client_send_setting(swClient *cli)
     id = htons(SW_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS);
     memcpy(p, &id, sizeof(id));
     p += 2;
-    value = htonl(SW_HTTP2_MAX_CONCURRENT_STREAMS);
+    value = htonl(settings->max_concurrent_streams);
     memcpy(p, &value, sizeof(value));
     p += 4;
     /**
@@ -132,7 +124,7 @@ static sw_inline void http2_client_send_setting(swClient *cli)
     id = htons(SW_HTTP2_SETTINGS_MAX_FRAME_SIZE);
     memcpy(p, &id, sizeof(id));
     p += 2;
-    value = htonl(SW_HTTP2_MAX_FRAME_SIZE);
+    value = htonl(settings->max_frame_size);
     memcpy(p, &value, sizeof(value));
     p += 4;
     /**
@@ -141,7 +133,7 @@ static sw_inline void http2_client_send_setting(swClient *cli)
     id = htons(SW_HTTP2_SETTINGS_INIT_WINDOW_SIZE);
     memcpy(p, &id, sizeof(id));
     p += 2;
-    value = htonl(SW_HTTP2_DEFAULT_WINDOW_SIZE);
+    value = htonl(settings->window_size);
     memcpy(p, &value, sizeof(value));
     p += 4;
 
@@ -169,6 +161,6 @@ static sw_inline void http2_add_header(nghttp2_nv *headers, char *k, int kl, cha
     swTrace("k=%s, len=%d, v=%s, len=%d", k, kl, v, vl);
 }
 
-void http2_add_cookie(nghttp2_nv *nv, int *index, zval *cookies TSRMLS_DC);
+void http2_add_cookie(nghttp2_nv *nv, int *index, zval *cookies);
 
 #endif

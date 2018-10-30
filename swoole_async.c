@@ -111,14 +111,14 @@ static void php_swoole_file_request_free(void *data)
     file_request *file_req = data;
     if (file_req->callback)
     {
-        sw_zval_ptr_dtor(&file_req->callback);
+        zval_ptr_dtor(file_req->callback);
     }
     efree(file_req->content);
-    sw_zval_ptr_dtor(&file_req->filename);
+    zval_ptr_dtor(file_req->filename);
     efree(file_req);
 }
 
-void swoole_async_init(int module_number TSRMLS_DC)
+void swoole_async_init(int module_number)
 {
     bzero(&SwooleAIO, sizeof(SwooleAIO));
 
@@ -146,7 +146,7 @@ static void php_swoole_dns_callback(char *domain, swDNSResolver_result *result, 
     dns_request *req = data;
     zval *retval = NULL;
     zval *zaddress;
-    zval **args[2];
+    zval args[2];
     char *address;
 
     SW_MAKE_STD_ZVAL(zaddress);
@@ -160,35 +160,35 @@ static void php_swoole_dns_callback(char *domain, swDNSResolver_result *result, 
         {
             address = result->hosts[0].address;
         }
-        SW_ZVAL_STRING(zaddress, address, 1);
+        ZVAL_STRING(zaddress, address);
     }
     else
     {
-        SW_ZVAL_STRING(zaddress, "", 1);
+        ZVAL_STRING(zaddress, "");
     }
 
-    args[0] = &req->domain;
-    args[1] = &zaddress;
+    args[0] = *req->domain;
+    args[1] = *zaddress;
 
     zval *zcallback = req->callback;
-    if (sw_call_user_function_ex(EG(function_table), NULL, zcallback, &retval, 2, args, 0, NULL TSRMLS_CC) == FAILURE)
+    if (sw_call_user_function_ex(EG(function_table), NULL, zcallback, &retval, 2, args, 0, NULL) == FAILURE)
     {
         swoole_php_fatal_error(E_WARNING, "swoole_asyns_dns_lookup handler error.");
         return;
     }
     if (EG(exception))
     {
-        zend_exception_error(EG(exception), E_ERROR TSRMLS_CC);
+        zend_exception_error(EG(exception), E_ERROR);
     }
 
-    sw_zval_ptr_dtor(&req->callback);
-    sw_zval_ptr_dtor(&req->domain);
+    zval_ptr_dtor(req->callback);
+    zval_ptr_dtor(req->domain);
     efree(req);
     if (retval)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
-    sw_zval_ptr_dtor(&zaddress);
+    zval_ptr_dtor(zaddress);
 }
 
 #ifdef SW_COROUTINE
@@ -211,11 +211,11 @@ static void php_swoole_dns_callback_coro(char *domain, swDNSResolver_result *res
             address = result->hosts[0].address;
         }
 
-        SW_ZVAL_STRING(zaddress, address, 1);
+        ZVAL_STRING(zaddress, address);
     }
     else
     {
-        SW_ZVAL_STRING(zaddress, "", 1);
+        ZVAL_STRING(zaddress, "");
     }
 
     //update cache
@@ -251,12 +251,12 @@ static void php_swoole_dns_callback_coro(char *domain, swDNSResolver_result *res
 
     if (retval != NULL)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
     //说明已经yield走了
     free_zdata:
     // free 上下文
-    sw_zval_ptr_dtor(&zaddress);
+    zval_ptr_dtor(zaddress);
     efree(req->context);
     efree(req);
 }
@@ -273,11 +273,11 @@ static void php_swoole_dns_timeout_coro(swTimer *timer, swTimer_node *tnode)
     dns_cache *cache = swHashMap_find(request_cache_map, Z_STRVAL_P(req->domain), Z_STRLEN_P(req->domain));
     if (cache != NULL && cache->update_time > (int64_t) swTimer_get_now_msec)
     {
-        SW_ZVAL_STRINGL(zaddress, (*cache->zaddress).str, (*cache->zaddress).length, 1);
+        ZVAL_STRINGL(zaddress, (*cache->zaddress).str, (*cache->zaddress).length);
     }
     else
     {
-        SW_ZVAL_STRING(zaddress, "", 1);
+        ZVAL_STRING(zaddress, "");
     }
 
     int ret = coro_resume(req->context, zaddress, &retval);
@@ -288,10 +288,10 @@ static void php_swoole_dns_timeout_coro(swTimer *timer, swTimer_node *tnode)
 
     if (retval != NULL)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
     free_zdata:
-    sw_zval_ptr_dtor(&zaddress);
+    zval_ptr_dtor(zaddress);
     efree(req->context);
     req->useless = 1;
 
@@ -302,14 +302,14 @@ static void php_swoole_aio_onDNSCompleted(swAio_event *event)
 {
     int64_t ret;
 
-    zval *retval = NULL, *zcallback = NULL;
-    zval **args[2];
     dns_request *dns_req = NULL;
-
-    zval _zcontent;
+    zval *retval = NULL, *zcallback = NULL;
+    zval args[2];
+    zval _zcontent, *zcontent = &_zcontent;
 
     dns_req = (dns_request *) event->req;
     zcallback = dns_req->callback;
+    ZVAL_NULL(zcontent);
 
     ret = event->ret;
     if (ret < 0)
@@ -318,17 +318,16 @@ static void php_swoole_aio_onDNSCompleted(swAio_event *event)
         swoole_php_error(E_WARNING, "Aio Error: %s[%d]", strerror(event->error), event->error);
     }
 
-    args[0] = &dns_req->domain;
-    zval *zcontent = &_zcontent;
+    args[0] = *dns_req->domain;
     if (ret < 0)
     {
-        SW_ZVAL_STRING(zcontent, "", 1);
+        ZVAL_STRING(zcontent, "");
     }
     else
     {
-        SW_ZVAL_STRING(zcontent, event->buf, 1);
+        ZVAL_STRING(zcontent, event->buf);
     }
-    args[1] = &zcontent;
+    args[1] = *zcontent;
 
     if (sw_call_user_function_ex(EG(function_table), NULL, zcallback, &retval, 2, args, 0, NULL) == FAILURE)
     {
@@ -340,39 +339,36 @@ static void php_swoole_aio_onDNSCompleted(swAio_event *event)
         zend_exception_error(EG(exception), E_ERROR);
     }
 
-    sw_zval_ptr_dtor(&dns_req->callback);
-    sw_zval_ptr_dtor(&dns_req->domain);
+    zval_ptr_dtor(dns_req->callback);
+    zval_ptr_dtor(dns_req->domain);
     efree(dns_req);
     efree(event->buf);
 
-    if (zcontent)
+    if (!ZVAL_IS_NULL(zcontent))
     {
-        sw_zval_ptr_dtor(&zcontent);
+        zval_ptr_dtor(zcontent);
     }
     if (retval)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
 }
 
 static void php_swoole_aio_onFileCompleted(swAio_event *event)
 {
     int isEOF = SW_FALSE;
-    int64_t ret;
-
-    zval *retval = NULL, *zcallback = NULL, *zwriten = NULL;
-    zval *zcontent = NULL;
-    zval **args[2];
-
-    zval _zcontent;
-    zval _zwriten;
-    bzero(&_zcontent, sizeof(zval));
-    bzero(&_zwriten, sizeof(zval));
-
+    int64_t ret = event->ret;
     file_request *file_req = event->object;
-    zcallback = file_req->callback;
 
-    ret = event->ret;
+    zval *retval = NULL, *zcallback = NULL;
+    zval args[2];
+    zval _zcontent, *zcontent = &_zcontent;
+    zval _zwriten, *zwriten = &_zwriten;
+
+    zcallback = file_req->callback;
+    ZVAL_NULL(zcontent);
+    ZVAL_NULL(zwriten);
+
     if (ret < 0)
     {
         SwooleG.error = event->error;
@@ -397,24 +393,22 @@ static void php_swoole_aio_onFileCompleted(swAio_event *event)
 
     if (event->type == SW_AIO_READ)
     {
-        args[0] = &file_req->filename;
-        args[1] = &zcontent;
-        zcontent = &_zcontent;
         if (ret < 0)
         {
-            SW_ZVAL_STRING(zcontent, "", 1);
+            ZVAL_STRING(zcontent, "");
         }
         else
         {
-            SW_ZVAL_STRINGL(zcontent, event->buf, ret, 1);
+            ZVAL_STRINGL(zcontent, event->buf, ret);
         }
+        args[0] = *file_req->filename;
+        args[1] = *zcontent;
     }
     else if (event->type == SW_AIO_WRITE)
     {
-        zwriten = &_zwriten;
-        args[0] = &file_req->filename;
-        args[1] = &zwriten;
         ZVAL_LONG(zwriten, ret);
+        args[0] = *file_req->filename;
+        args[1] = *zwriten;
     }
     else
     {
@@ -424,14 +418,14 @@ static void php_swoole_aio_onFileCompleted(swAio_event *event)
 
     if (zcallback)
     {
-        if (sw_call_user_function_ex(EG(function_table), NULL, zcallback, &retval, 2, args, 0, NULL TSRMLS_CC) == FAILURE)
+        if (sw_call_user_function_ex(EG(function_table), NULL, zcallback, &retval, 2, args, 0, NULL) == FAILURE)
         {
             swoole_php_fatal_error(E_WARNING, "swoole_async: onAsyncComplete handler error");
             return;
         }
         if (EG(exception))
         {
-            zend_exception_error(EG(exception), E_ERROR TSRMLS_CC);
+            zend_exception_error(EG(exception), E_ERROR);
         }
     }
 
@@ -489,17 +483,17 @@ static void php_swoole_aio_onFileCompleted(swAio_event *event)
         }
     }
 
-    if (zcontent)
+    if (!ZVAL_IS_NULL(zcontent))
     {
-        sw_zval_ptr_dtor(&zcontent);
+        zval_ptr_dtor(zcontent);
     }
-    if (zwriten)
+    if (!ZVAL_IS_NULL(zwriten))
     {
-        sw_zval_ptr_dtor(&zwriten);
+        zval_ptr_dtor(zwriten);
     }
     if (retval)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
 }
 
@@ -511,9 +505,9 @@ PHP_FUNCTION(swoole_async_read)
     long offset = 0;
     int open_flag = O_RDONLY;
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "zz|ll", &filename, &callback, &buf_size, &offset) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "zz|ll", &filename, &callback, &buf_size, &offset) == FAILURE)
     {
-        return;
+        RETURN_FALSE;
     }
 
     if (offset < 0)
@@ -521,7 +515,7 @@ PHP_FUNCTION(swoole_async_read)
         swoole_php_fatal_error(E_WARNING, "offset must be greater than 0.");
         RETURN_FALSE;
     }
-    if (!php_swoole_is_callable(callback TSRMLS_CC))
+    if (!php_swoole_is_callable(callback))
     {
         RETURN_FALSE;
     }
@@ -564,16 +558,16 @@ PHP_FUNCTION(swoole_async_read)
     req->fd = fd;
 
     req->filename = filename;
-    sw_zval_add_ref(&filename);
+    Z_TRY_ADDREF_P(filename);
     sw_copy_to_stack(req->filename, req->_filename);
 
-    if (!php_swoole_is_callable(callback TSRMLS_CC))
+    if (!php_swoole_is_callable(callback))
     {
         RETURN_FALSE;
     }
 
     req->callback = callback;
-    sw_zval_add_ref(&callback);
+    Z_TRY_ADDREF_P(callback);
     sw_copy_to_stack(req->callback, req->_callback);
     req->content = fcnt;
     req->once = 0;
@@ -611,12 +605,12 @@ PHP_FUNCTION(swoole_async_write)
     zval *filename;
 
     char *fcnt;
-    zend_size_t fcnt_len = 0;
+    size_t fcnt_len = 0;
     off_t offset = -1;
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "zs|lz", &filename, &fcnt, &fcnt_len, &offset, &callback) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "zs|lz", &filename, &fcnt, &fcnt_len, &offset, &callback) == FAILURE)
     {
-        return;
+        RETURN_FALSE;
     }
     if (fcnt_len <= 0)
     {
@@ -624,7 +618,7 @@ PHP_FUNCTION(swoole_async_write)
     }
     if (callback && !ZVAL_IS_NULL(callback))
     {
-        if (!php_swoole_is_callable(callback TSRMLS_CC))
+        if (!php_swoole_is_callable(callback))
         {
             RETURN_FALSE;
         }
@@ -663,13 +657,13 @@ PHP_FUNCTION(swoole_async_write)
     req->length = fcnt_len;
     req->offset = offset;
     req->filename = filename;
-    sw_zval_add_ref(&filename);
+    Z_TRY_ADDREF_P(filename);
     sw_copy_to_stack(req->filename, req->_filename);
 
     if (callback && !ZVAL_IS_NULL(callback))
     {
         req->callback = callback;
-        sw_zval_add_ref(&callback);
+        Z_TRY_ADDREF_P(callback);
         sw_copy_to_stack(req->callback, req->_callback);
     }
     else
@@ -708,9 +702,9 @@ PHP_FUNCTION(swoole_async_readfile)
     zval *filename;
 
     int open_flag = O_RDONLY;
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "zz", &filename, &callback) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "zz", &filename, &callback) == FAILURE)
     {
-        return;
+        RETURN_FALSE;
     }
     convert_to_string(filename);
 
@@ -720,8 +714,9 @@ PHP_FUNCTION(swoole_async_readfile)
         swoole_php_fatal_error(E_WARNING, "open file[%s] failed. Error: %s[%d]", Z_STRVAL_P(filename), strerror(errno), errno);
         RETURN_FALSE;
     }
-    if (!php_swoole_is_callable(callback TSRMLS_CC))
+    if (!php_swoole_is_callable(callback))
     {
+        close(fd);
         RETURN_FALSE;
     }
 
@@ -751,11 +746,11 @@ PHP_FUNCTION(swoole_async_readfile)
     req->fd = fd;
 
     req->filename = filename;
-    sw_zval_add_ref(&filename);
+    Z_TRY_ADDREF_P(filename);
     sw_copy_to_stack(req->filename, req->_filename);
 
     req->callback = callback;
-    sw_zval_add_ref(&callback);
+    Z_TRY_ADDREF_P(callback);
     sw_copy_to_stack(req->callback, req->_callback);
 
     req->content = emalloc(length);
@@ -793,12 +788,12 @@ PHP_FUNCTION(swoole_async_writefile)
     zval *callback = NULL;
     zval *filename;
     char *fcnt;
-    zend_size_t fcnt_len;
+    size_t fcnt_len;
     long flags = 0;
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS()TSRMLS_CC, "zs|zl", &filename, &fcnt, &fcnt_len, &callback, &flags) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "zs|zl", &filename, &fcnt, &fcnt_len, &callback, &flags) == FAILURE)
     {
-        return;
+        RETURN_FALSE;
     }
     int open_flag = O_CREAT | O_WRONLY;
     if (flags & PHP_FILE_APPEND)
@@ -821,7 +816,7 @@ PHP_FUNCTION(swoole_async_writefile)
     }
     if (callback && !ZVAL_IS_NULL(callback))
     {
-        if (!php_swoole_is_callable(callback TSRMLS_CC))
+        if (!php_swoole_is_callable(callback))
         {
             RETURN_FALSE;
         }
@@ -840,13 +835,13 @@ PHP_FUNCTION(swoole_async_writefile)
 
     file_request *req = emalloc(sizeof(file_request));
     req->filename = filename;
-    sw_zval_add_ref(&filename);
+    Z_TRY_ADDREF_P(filename);
     sw_copy_to_stack(req->filename, req->_filename);
 
     if (callback && !ZVAL_IS_NULL(callback))
     {
         req->callback = callback;
-        sw_zval_add_ref(&callback);
+        Z_TRY_ADDREF_P(callback);
         sw_copy_to_stack(req->callback, req->_callback);
     }
     else
@@ -899,10 +894,9 @@ PHP_FUNCTION(swoole_async_set)
     HashTable *vht;
     zval *v;
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z", &zset) == FAILURE)
-    {
-        return;
-    }
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ARRAY(zset)
+    ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
     php_swoole_array_separate(zset);
 
@@ -977,7 +971,7 @@ PHP_FUNCTION(swoole_async_set)
         }
     }
 #endif
-    sw_zval_ptr_dtor(&zset);
+    zval_ptr_dtor(zset);
 }
 
 PHP_FUNCTION(swoole_async_dns_lookup)
@@ -985,9 +979,9 @@ PHP_FUNCTION(swoole_async_dns_lookup)
     zval *domain;
     zval *cb;
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "zz", &domain, &cb) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "zz", &domain, &cb) == FAILURE)
     {
-        return;
+        RETURN_FALSE;
     }
 
     if (Z_TYPE_P(domain) != IS_STRING)
@@ -1002,7 +996,7 @@ PHP_FUNCTION(swoole_async_dns_lookup)
         RETURN_FALSE;
     }
 
-    if (!php_swoole_is_callable(cb TSRMLS_CC))
+    if (!php_swoole_is_callable(cb))
     {
         RETURN_FALSE;
     }
@@ -1010,11 +1004,11 @@ PHP_FUNCTION(swoole_async_dns_lookup)
     dns_request *req = emalloc(sizeof(dns_request));
     req->callback = cb;
     sw_copy_to_stack(req->callback, req->_callback);
-    sw_zval_add_ref(&req->callback);
+    Z_TRY_ADDREF_P(req->callback);
 
     req->domain = domain;
     sw_copy_to_stack(req->domain, req->_domain);
-    sw_zval_add_ref(&req->domain);
+    Z_TRY_ADDREF_P(req->domain);
 
     /**
      * Use asynchronous IO
@@ -1061,7 +1055,6 @@ PHP_FUNCTION(swoole_async_dns_lookup)
 
 static int process_stream_onRead(swReactor *reactor, swEvent *event)
 {
-
     process_stream *ps = event->socket->object;
     char *buf = ps->buffer->str + ps->buffer->length;
     size_t len = ps->buffer->size - ps->buffer->length;
@@ -1083,16 +1076,23 @@ static int process_stream_onRead(swReactor *reactor, swEvent *event)
     }
 
     zval *retval = NULL;
-    zval **args[2];
+    zval args[2];
 
     zval *zdata;
     SW_MAKE_STD_ZVAL(zdata);
-    SW_ZVAL_STRINGL(zdata, ps->buffer->str, ps->buffer->length, 1);
+    if (ps->buffer->length == 0)
+    {
+        ZVAL_EMPTY_STRING(zdata);
+    }
+    else
+    {
+        ZVAL_STRINGL(zdata, ps->buffer->str, ps->buffer->length);
+    }
 
     SwooleG.main_reactor->del(SwooleG.main_reactor, ps->fd);
 
     swString_free(ps->buffer);
-    args[0] = &zdata;
+    args[0] = *zdata;
 
     int status;
     zval *zstatus;
@@ -1110,45 +1110,24 @@ static int process_stream_onRead(swReactor *reactor, swEvent *event)
         ZVAL_FALSE(zstatus);
     }
 
-    args[1] = &zstatus;
+    args[1] = *zstatus;
 
     zval *zcallback = ps->callback;
-
-    if (zcallback)
+    if (sw_call_user_function_ex(EG(function_table), NULL, zcallback, &retval, 2, args, 0, NULL) == FAILURE)
     {
-        if (sw_call_user_function_ex(EG(function_table), NULL, zcallback, &retval, 2, args, 0, NULL TSRMLS_CC) == FAILURE)
-        {
-            swoole_php_fatal_error(E_WARNING, "swoole_async: onAsyncComplete handler error");
-        }
-        sw_zval_free(zcallback);
+        swoole_php_fatal_error(E_WARNING, "swoole_async: onAsyncComplete handler error");
     }
-    else
-    {
-#ifdef SW_COROUTINE
-        php_context *context = ps->context;
-        sw_zval_add_ref(&zdata);
-        add_assoc_zval(zstatus, "output", zdata);
-        int ret = coro_resume(context, zstatus, &retval);
-        if (ret == CORO_END && retval)
-        {
-            sw_zval_ptr_dtor(&retval);
-        }
-        efree(context);
-#else
-        return SW_OK;
-#endif
-    }
+    sw_zval_free(zcallback);
 
     if (EG(exception))
     {
-        zend_exception_error(EG(exception), E_ERROR TSRMLS_CC);
+        zend_exception_error(EG(exception), E_ERROR);
     }
     if (retval != NULL)
     {
-        sw_zval_ptr_dtor(&retval);
+        zval_ptr_dtor(retval);
     }
-    sw_zval_ptr_dtor(&zdata);
-    sw_zval_ptr_dtor(&zstatus);
+    zval_ptr_dtor(zstatus);
     close(ps->fd);
     efree(ps);
 
@@ -1158,12 +1137,12 @@ static int process_stream_onRead(swReactor *reactor, swEvent *event)
 PHP_METHOD(swoole_async, exec)
 {
     char *command;
-    zend_size_t command_len;
+    size_t command_len;
     zval *callback;
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sz", &command, &command_len, &callback) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "sz", &command, &command_len, &callback) == FAILURE)
     {
-        return;
+        RETURN_FALSE;
     }
 
     php_swoole_check_reactor();
@@ -1192,7 +1171,7 @@ PHP_METHOD(swoole_async, exec)
 #ifdef SW_COROUTINE
     ps->context = NULL;
 #endif
-    sw_zval_add_ref(&ps->callback);
+    Z_TRY_ADDREF_P(ps->callback);
 
     ps->fd = fd;
     ps->pid = pid;
@@ -1213,70 +1192,15 @@ PHP_METHOD(swoole_async, exec)
 }
 
 #ifdef SW_COROUTINE
-PHP_FUNCTION(swoole_coroutine_exec)
-{
-    char *command;
-    zend_size_t command_len;
-
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &command, &command_len) == FAILURE)
-    {
-        return;
-    }
-
-    coro_check(TSRMLS_C);
-
-    php_swoole_check_reactor();
-    if (!swReactor_handle_isset(SwooleG.main_reactor, PHP_SWOOLE_FD_PROCESS_STREAM))
-    {
-        SwooleG.main_reactor->setHandle(SwooleG.main_reactor, PHP_SWOOLE_FD_PROCESS_STREAM | SW_EVENT_READ, process_stream_onRead);
-        SwooleG.main_reactor->setHandle(SwooleG.main_reactor, PHP_SWOOLE_FD_PROCESS_STREAM | SW_EVENT_ERROR, process_stream_onRead);
-    }
-
-    pid_t pid;
-    int fd = swoole_shell_exec(command, &pid);
-    if (fd < 0)
-    {
-        swoole_php_error(E_WARNING, "Unable to execute '%s'", command);
-        RETURN_FALSE;
-    }
-
-    swString *buffer = swString_new(1024);
-    if (buffer == NULL)
-    {
-        RETURN_FALSE;
-    }
-
-    process_stream *ps = emalloc(sizeof(process_stream));
-    ps->callback = NULL;
-    ps->context = emalloc(sizeof(php_context));
-    ps->fd = fd;
-    ps->pid = pid;
-    ps->buffer = buffer;
-
-    if (SwooleG.main_reactor->add(SwooleG.main_reactor, ps->fd, PHP_SWOOLE_FD_PROCESS_STREAM | SW_EVENT_READ) < 0)
-    {
-        efree(ps->context);
-        efree(ps);
-        RETURN_FALSE;
-    }
-    else
-    {
-        swConnection *_socket = swReactor_get(SwooleG.main_reactor, ps->fd);
-        _socket->object = ps;
-        coro_save(ps->context);
-        coro_yield();
-    }
-}
-
 PHP_FUNCTION(swoole_async_dns_lookup_coro)
 {
     zval *domain;
     double timeout = SW_CLIENT_DEFAULT_TIMEOUT;
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z|d", &domain, &timeout) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "z|d", &domain, &timeout) == FAILURE)
     {
         RETURN_FALSE;
     }
-    coro_check(TSRMLS_C);
+    coro_check();
     if (Z_TYPE_P(domain) != IS_STRING)
     {
         swoole_php_fatal_error(E_WARNING, "invalid domain name.");
@@ -1297,7 +1221,7 @@ PHP_FUNCTION(swoole_async_dns_lookup_coro)
     dns_cache *cache = swHashMap_find(request_cache_map, Z_STRVAL_P(domain), Z_STRLEN_P(domain));
     if (cache != NULL && cache->update_time > (int64_t)swTimer_get_now_msec )
     {
-        SW_RETURN_STRINGL((*cache->zaddress).str,(*cache->zaddress).length,1);
+        RETURN_STRINGL((*cache->zaddress).str,(*cache->zaddress).length);
     }
 
     dns_request *req = emalloc(sizeof(dns_request));

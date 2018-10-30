@@ -48,7 +48,7 @@ void Channel::yield(enum channel_op type)
     int _cid = coroutine_get_current_cid();
     if (_cid == -1)
     {
-        swError("Socket::yield() must be called in the coroutine.");
+        swError("Channel::yield() must be called in the coroutine.");
     }
     coroutine_t *co = coroutine_get_by_id(_cid);
     if (type == PRODUCER)

@@ -3,11 +3,11 @@ swoole_http_client_coro: use timeout and timeout before connect
 --SKIPIF--
 <?php
 require __DIR__ . '/../include/skipif.inc';
-skip_if_in_docker('foreign network dns error');
+skip_if_in_travis('foreign network dns error');
 ?>
 --FILE--
 <?php
-require_once __DIR__ . '/../include/bootstrap.php';
+require __DIR__ . '/../include/bootstrap.php';
 go(function () {
     $host = 'www.qq.com';
     $requestHeaders = [

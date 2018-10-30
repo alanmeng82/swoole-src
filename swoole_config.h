@@ -27,7 +27,7 @@
 
 #define SW_MAX_FDTYPE              32   //32 kinds of event
 #define SW_MAX_HOOK_TYPE           32
-#define SW_ERROR_MSG_SIZE          512
+#define SW_ERROR_MSG_SIZE          1024
 #define SW_MAX_FILE_CONTENT        (64*1024*1024) //for swoole_file_get_contents
 #define SW_MAX_LISTEN_PORT         60000
 #define SW_MAX_CONCURRENT_TASK     1024
@@ -214,7 +214,7 @@
  * HTTP Protocol
  */
 #define SW_HTTP_SERVER_SOFTWARE          "swoole-http-server"
-#define SW_HTTP_BAD_REQUEST              "<h1>400 Bad Request</h1>\r\n"
+#define SW_HTTP_BAD_REQUEST_TIP          "<h1>400 Bad Request</h1>\r\n"
 #define SW_HTTP_PARAM_MAX_NUM            128
 #define SW_HTTP_COOKIE_KEYLEN            128
 #define SW_HTTP_COOKIE_VALLEN            4096
@@ -234,12 +234,13 @@
 /**
  * HTTP2 Protocol
  */
-#define SW_HTTP2_DATA_BUFFER_SIZE        8192
-#define SW_HTTP2_MAX_CONCURRENT_STREAMS  128
-#define SW_HTTP2_MAX_FRAME_SIZE          ((1u << 14))
-#define SW_HTTP2_MAX_WINDOW_SIZE         ((1u << 31) - 1)
-#define SW_HTTP2_DEFAULT_WINDOW_SIZE     65535
-#define SW_HTTP2_MAX_HEADER_LIST_SIZE    8192
+#define SW_HTTP2_DATA_BUFFER_SIZE            8192
+#define SW_HTTP2_DEFAULT_HEADER_TABLE_SIZE   (1 << 12)
+#define SW_HTTP2_MAX_MAX_CONCURRENT_STREAMS  128
+#define SW_HTTP2_MAX_MAX_FRAME_SIZE          ((1u << 14))
+#define SW_HTTP2_MAX_WINDOW_SIZE             ((1u << 31) - 1)
+#define SW_HTTP2_DEFAULT_WINDOW_SIZE         65535
+#define SW_HTTP2_MAX_MAX_HEADER_LIST_SIZE    UINT32_MAX
 
 #define SW_HTTP_CLIENT_USERAGENT         "swoole-http-client"
 #define SW_HTTP_CLIENT_BOUNDARY_PREKEY   "----SwooleBoundary"

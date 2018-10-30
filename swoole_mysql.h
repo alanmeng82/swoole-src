@@ -256,10 +256,10 @@ typedef struct
     zend_bool strict_type;
     zend_bool fetch_mode;
 
-    zend_size_t host_len;
-    zend_size_t user_len;
-    zend_size_t password_len;
-    zend_size_t database_len;
+    size_t host_len;
+    size_t user_len;
+    size_t password_len;
+    size_t database_len;
 
     long port;
     double timeout;
@@ -568,7 +568,7 @@ static sw_inline int mysql_length_coded_binary(char *m, ulong_t *r, char *nul, i
     return retcode;
 }
 
-int mysql_query(zval *zobject, mysql_client *client, swString *sql, zval *callback TSRMLS_DC);
+int mysql_query(zval *zobject, mysql_client *client, swString *sql, zval *callback);
 
 END_EXTERN_C()
 
